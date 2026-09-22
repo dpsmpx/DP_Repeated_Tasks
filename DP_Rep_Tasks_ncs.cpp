@@ -886,17 +886,15 @@ public:
     }
 
     int run() {
-        setlocale(LC_ALL, "");
+        if (setlocale(LC_ALL, "C.UTF-8") == 0)
+            setlocale(LC_ALL, "");
 
         initscr();
         cbreak();
         noecho();
+        meta(stdscr, TRUE);
         keypad(stdscr, TRUE);
         curs_set(0);
-
-#ifdef NCURSES_VERSION
-        use_legacy_coding(2);
-#endif
 
         if (has_colors()) {
             start_color();
