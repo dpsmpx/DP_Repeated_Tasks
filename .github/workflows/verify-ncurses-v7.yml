@@ -35,7 +35,7 @@ jobs:
           LC_ALL: C
         run: |
           rm -f repeated_tasks.dat repeated_tasks.dat.tmp repeated_tasks.dat.bak
-          printf '%s\n' 'RTASKS3' '2' '1' 'BEGIN' '1' 'Очень длинная русская задача для проверки правой границы терминала 1234567890' 'Описание не должно физически переноситься на следующую строку автоматически.' '1' '0' '0' '0' '0' '0' '0' 'END' > repeated_tasks.dat
+          printf '%s\n' 'RTASKS3' '2' '1' 'BEGIN' '1' 'Очень длинная русская задача для проверки правой границы терминала 1234567890' 'Описание не должно физически переноситься на следующую строку автоматически.' '1' '0' '0' '0' '0' '0' '0' '0' 'END' > repeated_tasks.dat
           set +e
           printf '\n\n5bbbq' | TERM=xterm script -q -e -c 'stty cols 50 rows 24; ./app_san' /tmp/app.log >/dev/null
           rc=$?
