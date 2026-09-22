@@ -5,18 +5,11 @@
 // Интерфейс: ncurses, адаптивная разметка, клавиатурная навигация.
 //
 // Сборка: C++98 + ncurses.
-// Пример: g++ -std=c++98 -Wall -Wextra -Wpedantic -O2 -o dp_rep_tasks_ncs DP_Rep_Tasks_ncs.cpp -lncursesw
+// Пример: g++ -std=c++98 -Wall -Wextra -Wpedantic -O2 -o dp_rep_tasks_ncs DP_Rep_Tasks_ncs.cpp -lncurses
 //
 // Данные: repeated_tasks.dat. Формат RTASKS3 и все проверки хранения
 // полностью совместимы с основной версией.
 // ============================================================================
-
-#ifndef _XOPEN_SOURCE_EXTENDED
-#define _XOPEN_SOURCE_EXTENDED 1
-#endif
-#ifndef NCURSES_WIDECHAR
-#define NCURSES_WIDECHAR 1
-#endif
 
 #include <ncurses.h>
 #include <iostream>
@@ -31,7 +24,6 @@
 #include <sstream>
 #include <cstdlib>
 #include <clocale>
-#include <climits>
 
 using namespace std;
 
@@ -90,130 +82,16 @@ static Urgency toUrgency(int v) {
 }
 
 // ===================== UTF-8 =====================
-// Для интерфейса считаем кодовые точки. Для русского/латинского текста
-// это совпадает с занимаемой шириной; исходные строки никогда не меняются.
-
-// UTF-8 -> wide ncurses: выводим русские строки как символы, а не как байты.
-static bool isUtf8LocaleName(const char* name) {
-    if (name == 0) return false;
-    return strstr(name, "UTF-8") != 0 || strstr(name, "utf8") != 0 ||
-           strstr(name, "Utf8") != 0 || strstr(name, "UTF8") != 0;
-}
-
-static void initUtf8Locale() {
-    const char* current = setlocale(LC_CTYPE, "");
-    if (isUtf8LocaleName(current)) return;
-
-    static const char* candidates[] = {
-        "C.UTF-8",
-        "C.utf8",
-        "ru_RU.UTF-8",
-        "en_US.UTF-8",
-        0
-    };
-
-    for (int i = 0; candidates[i] != 0; ++i) {
-        current = setlocale(LC_CTYPE, candidates[i]);
-        if (isUtf8LocaleName(current)) return;
-    }
-}
-
-static bool decodeUtf8(const string& s, size_t& pos, unsigned long& cp) {
-    if (pos >= s.size()) return false;
-
-    unsigned char c0 = static_cast<unsigned char>(s[pos]);
-    if (c0 < 0x80) {
-        cp = c0;
-        ++pos;
-        return true;
-    }
-
-    int need = 0;
-    unsigned long value = 0;
-    unsigned long minValue = 0;
-
-    if ((c0 & 0xE0) == 0xC0) {
-        need = 1;
-        value = c0 & 0x1F;
-        minValue = 0x80;
-    } else if ((c0 & 0xF0) == 0xE0) {
-        need = 2;
-        value = c0 & 0x0F;
-        minValue = 0x800;
-    } else if ((c0 & 0xF8) == 0xF0) {
-        need = 3;
-        value = c0 & 0x07;
-        minValue = 0x10000;
-    } else {
-        ++pos;
-        cp = static_cast<unsigned long>('?');
-        return false;
-    }
-
-    if (pos + static_cast<size_t>(need) >= s.size()) {
-        ++pos;
-        cp = static_cast<unsigned long>('?');
-        return false;
-    }
-
-    for (int i = 1; i <= need; ++i) {
-        unsigned char c = static_cast<unsigned char>(s[pos + static_cast<size_t>(i)]);
-        if ((c & 0xC0) != 0x80) {
-            ++pos;
-            cp = static_cast<unsigned long>('?');
-            return false;
-        }
-        value = (value << 6) | (c & 0x3F);
-    }
-
-    pos += static_cast<size_t>(need + 1);
-
-    if (value < minValue || value > 0x10FFFFUL ||
-        (value >= 0xD800UL && value <= 0xDFFFUL)) {
-        cp = static_cast<unsigned long>('?');
-        return false;
-    }
-
-    cp = value;
-    return true;
-}
-
-static wstring utf8ToWide(const string& s) {
-    wstring out;
-    size_t pos = 0;
-
-    while (pos < s.size()) {
-        unsigned long cp = 0;
-        if (!decodeUtf8(s, pos, cp)) cp = static_cast<unsigned long>('?');
-
-#if WCHAR_MAX >= 0x10FFFF
-        out.push_back(static_cast<wchar_t>(cp));
-#else
-        if (cp <= 0xFFFFUL) {
-            out.push_back(static_cast<wchar_t>(cp));
-        } else {
-            cp -= 0x10000UL;
-            out.push_back(static_cast<wchar_t>(0xD800UL + (cp >> 10)));
-            out.push_back(static_cast<wchar_t>(0xDC00UL + (cp & 0x3FFUL)));
-        }
-#endif
-    }
-
-    return out;
-}
-
-static void printUtf8At(int y, int x, const string& text) {
-    if (y < 0 || x < 0 || y >= LINES || x >= COLS) return;
-
-    wstring wide = utf8ToWide(text);
-    int maxChars = COLS - x;
-    if (maxChars <= 0) return;
-
-    mvaddnwstr(y, x, wide.c_str(), maxChars);
-}
-
+// C4Droid предоставляет обычную byte-oriented ncurses.
+// Строки хранятся в UTF-8 как есть. После инициализации экрана
+// use_legacy_coding(2) запрещает ncurses превращать байты 128..255
+// в вид M-XX, поэтому терминал получает исходный UTF-8.
+//
+// Ширина интерфейса по-прежнему считается вручную через utf8Len():
+// для кириллицы и латиницы 1 кодовая точка = 1 экранная ячейка.
 
 static size_t utf8Len(const string& s) {
+
     size_t n = 0;
     for (size_t i = 0; i < s.size(); ++i)
         if ((static_cast<unsigned char>(s[i]) & 0xC0) != 0x80) ++n;
@@ -960,7 +838,6 @@ class Application {
     int messageReturnScreen;
 
     int messageReturnIndex;
-    bool inputIsKey;
 
     static const int CP_HEADER    = 1;
     static const int CP_NORMAL    = 2;
@@ -985,13 +862,17 @@ public:
     }
 
     int run() {
-        initUtf8Locale();
+        setlocale(LC_ALL, "");
 
         initscr();
         cbreak();
         noecho();
         keypad(stdscr, TRUE);
         curs_set(0);
+
+#ifdef NCURSES_VERSION
+        use_legacy_coding(2);
+#endif
 
         if (has_colors()) {
             start_color();
@@ -1043,10 +924,7 @@ public:
 
             refresh();
 
-            wint_t input = 0;
-            int inputRc = get_wch(&input);
-            inputIsKey = (inputRc == KEY_CODE_YES);
-            int ch = (inputRc == ERR) ? ERR : static_cast<int>(input);
+            int ch = getch();
             switch (screen) {
                 case SCR_MENU:        handleMenu(ch);        break;
                 case SCR_LIST:        handleList(ch);        break;
@@ -2420,7 +2298,7 @@ private:
             return;
         }
 
-        if (isFormTextField(formField) && !inputIsKey)
+        if (isFormTextField(formField))
             appendInputByte(formTextRef(formField), ch);
     }
 
@@ -2530,8 +2408,7 @@ private:
             return;
         }
 
-        if (!inputIsKey)
-            appendInputByte(dateInput, ch);
+        appendInputByte(dateInput, ch);
     }
 
     // ===================== KANBAN =====================
