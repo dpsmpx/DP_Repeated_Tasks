@@ -1149,15 +1149,14 @@ private:
     }
 
     void drawTaskList() {
+        rebuildFlat();
         drawTitleLine("СПИСОК ЗАДАЧ");
 
-        string count = "Задач: " + intToStr(flat.size());
+        string count = "Задач: " + intToStr(static_cast<long long>(flat.size()));
         if (g_dirty) count += "   *";
         useAttr(CP_SECONDARY, false);
         mvprintw(0, 2, "%s", fitOutput(count, static_cast<size_t>(max(1, cols - 4))).c_str());
         offAttr(CP_SECONDARY, false);
-
-        rebuildFlat();
         drawListHeaders();
 
         int visible = rows - 4;
@@ -2477,17 +2476,22 @@ private:
 
         if (ch == 'y' || ch == 'Y') {
             messageReturnIndex = 1;
+            return;
         }
 
         if (ch == 'n' || ch == 'N' || ch == 27) {
+            ConfirmKind kind = confirmKind;
             messageReturnIndex = 0;
-            if (ch == 27) {
-                confirmKind = CONF_NONE;
+            confirmKind = CONF_NONE;
+
+            if (kind == CONF_DELETE_LIST)
+                screen = SCR_LIST;
+            else if (kind == CONF_DELETE_DETAIL)
+                screen = SCR_DETAIL;
+            else if (kind == CONF_DELETE_HISTORY)
+                screen = SCR_HISTORY;
+            else
                 screen = SCR_MENU;
-            } else {
-                confirmKind = CONF_NONE;
-                returnAfterCancel();
-            }
             return;
         }
 
@@ -2495,13 +2499,15 @@ private:
             return;
 
         bool yes = (messageReturnIndex == 1);
-
         ConfirmKind kind = confirmKind;
         confirmKind = CONF_NONE;
 
         if (kind == CONF_DELETE_LIST || kind == CONF_DELETE_DETAIL) {
             if (!yes) {
-                returnAfterDeleteCancel(kind);
+                if (kind == CONF_DELETE_LIST)
+                    screen = SCR_LIST;
+                else
+                    screen = SCR_DETAIL;
                 return;
             }
 
@@ -2547,11 +2553,9 @@ private:
                 if (historySel >= static_cast<int>(t->history.size()))
                     historySel = static_cast<int>(t->history.size()) - 1;
                 if (historySel < 0) historySel = 0;
-
-                screen = SCR_HISTORY;
-            } else {
-                screen = SCR_HISTORY;
             }
+
+            screen = SCR_HISTORY;
             return;
         }
 
@@ -2580,18 +2584,6 @@ private:
             }
             return;
         }
-    }
-
-    void returnAfterDeleteCancel(ConfirmKind kind) {
-        if (kind == CONF_DELETE_LIST)
-            screen = SCR_LIST;
-        else
-            screen = SCR_DETAIL;
-    }
-
-    void returnAfterCancel() {
-        if (confirmKind == CONF_RELOAD || confirmKind == CONF_EXIT)
-            screen = SCR_MENU;
     }
 
     void handleMessage(int ch) {
