@@ -11,6 +11,13 @@
 // полностью совместимы с основной версией.
 // ============================================================================
 
+#ifndef _XOPEN_SOURCE_EXTENDED
+#define _XOPEN_SOURCE_EXTENDED 1
+#endif
+#ifndef NCURSES_WIDECHAR
+#define NCURSES_WIDECHAR 1
+#endif
+
 #include <ncurses.h>
 #include <iostream>
 #include <vector>
