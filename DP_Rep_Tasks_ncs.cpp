@@ -862,7 +862,7 @@ public:
           historyTaskId(-1), historySel(0), historyScroll(0),
           kanbanMode(0), kanbanCol(0),
           confirmKind(CONF_NONE), confirmTaskId(-1),
-          messageReturnScreen(SCR_MENU), messageReturnIndex(0), inputIsKey(false) {
+          messageReturnScreen(SCR_MENU), messageReturnIndex(0) {
         kanbanRow[0] = kanbanRow[1] = kanbanRow[2] = 0;
     }
 
