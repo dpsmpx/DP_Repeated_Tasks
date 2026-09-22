@@ -4,6 +4,7 @@ on:
   push:
     paths:
       - 'DP_Rep_Tasks_ncs.cpp'
+      - '.github/workflows/verify-ncurses-utf8.yml'
 
 jobs:
   build-and-smoke:
