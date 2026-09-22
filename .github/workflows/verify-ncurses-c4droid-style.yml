@@ -1,0 +1,28 @@
+name: verify-ncurses-c4droid-style
+
+on:
+  push:
+    paths:
+      - 'DP_Rep_Tasks_ncs.cpp'
+      - '.github/workflows/verify-ncurses-c4droid-style.yml'
+
+jobs:
+  build-and-output:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install ncurses
+        run: sudo apt-get update && sudo apt-get install -y libncurses-dev
+      - name: Build C++98
+        run: g++ -std=c++98 -Wall -Wextra -Wpedantic -O2 DP_Rep_Tasks_ncs.cpp -lncurses -o app
+      - name: Build ASAN UBSAN
+        run: g++ -std=c++98 -Wall -Wextra -Wpedantic -O1 -g -fsanitize=address,undefined DP_Rep_Tasks_ncs.cpp -lncurses -o app_san
+      - name: UTF-8 output smoke
+        env:
+          LANG: C
+          LC_ALL: C
+        run: |
+          rm -f repeated_tasks.dat repeated_tasks.dat.tmp repeated_tasks.dat.bak
+          printf 'q' | TERM=xterm script -q -e -c 'stty cols 100 rows 30; ./app_san' /tmp/ncurses.log >/dev/null
+          grep -a -q 'Список задач' /tmp/ncurses.log
+          test -f /tmp/ncurses.log
