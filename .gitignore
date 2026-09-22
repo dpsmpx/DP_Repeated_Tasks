@@ -1,0 +1,10 @@
+# Данные приложения (внутреннее хранилище) — не версионируем
+repeated_tasks.dat
+repeated_tasks.dat.tmp
+repeated_tasks.dat.bak
+
+# Сборка
+*.o
+*.out
+*.apk
+DP_Repeated_Tasks
