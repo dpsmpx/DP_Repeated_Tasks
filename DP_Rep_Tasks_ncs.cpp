@@ -84,8 +84,8 @@ static Urgency toUrgency(int v) {
 // ===================== UTF-8 =====================
 // C4Droid предоставляет обычную byte-oriented ncurses.
 // Строки хранятся в UTF-8 как есть. После инициализации экрана
-// use_legacy_coding(2) запрещает ncurses превращать байты 128..255
-// в вид M-XX, поэтому терминал получает исходный UTF-8.
+// Текст выводится напрямую в терминал в исходном UTF-8.
+// ncurses используется только для клавиатуры и размеров окна.
 //
 // Ширина интерфейса по-прежнему считается вручную через utf8Len():
 // для кириллицы и латиницы 1 кодовая точка = 1 экранная ячейка.
@@ -119,7 +119,8 @@ static void printUtf8At(int y, int x, const string& text) {
     if (utf8Len(safe) > static_cast<size_t>(remaining))
         safe = utf8Trunc(safe, static_cast<size_t>(remaining));
 
-    mvaddstr(y, x, safe.c_str());
+    terminalMove(y, x);
+    cout << safe;
 }
 
 static string utf8Trunc(const string& s, size_t maxChars) {
