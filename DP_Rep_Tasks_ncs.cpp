@@ -161,6 +161,45 @@ static string fitPad(const string& s, size_t width) {
     return r;
 }
 
+static string ansiMove(int y, int x) {
+    char buf[48];
+    sprintf(buf, "\033[%d;%dH", y + 1, x + 1);
+    return string(buf);
+}
+
+static void terminalClear() {
+    cout << "\033[2J\033[H";
+}
+
+static void terminalMove(int y, int x) {
+    if (y < 0 || x < 0 || y >= LINES || x >= COLS) return;
+    cout << ansiMove(y, x);
+}
+
+static void terminalReverseOn() {
+    cout << "\033[7m";
+}
+
+static void terminalReverseOff() {
+    cout << "\033[27m";
+}
+
+static void terminalSetAttr(int pair, bool bold) {
+    switch (pair) {
+        case 1: cout << (bold ? "\033[1;36m" : "\033[36m"); break;
+        case 2: cout << "\033[37m"; break;
+        case 3: cout << (bold ? "\033[1;30;47m" : "\033[30;47m"); break;
+        case 4: cout << (bold ? "\033[1;35m" : "\033[35m"); break;
+        case 5: cout << "\033[31m"; break;
+        case 6: cout << "\033[34m"; break;
+        default: cout << (bold ? "\033[1m" : "\033[0m"); break;
+    }
+}
+
+static void terminalResetAttr() {
+    cout << "\033[0m";
+}
+
 static string centerText(const string& s, size_t width) {
     string r = fitOutput(s, width);
     size_t n = utf8Len(r);
@@ -896,16 +935,6 @@ public:
         keypad(stdscr, TRUE);
         curs_set(0);
 
-        if (has_colors()) {
-            start_color();
-            init_pair(CP_HEADER,    COLOR_CYAN,    COLOR_BLACK);
-            init_pair(CP_NORMAL,    COLOR_WHITE,   COLOR_BLACK);
-            init_pair(CP_SELECTED,  COLOR_BLACK,   COLOR_WHITE);
-            init_pair(CP_SECONDARY, COLOR_MAGENTA, COLOR_BLACK);
-            init_pair(CP_DANGER,    COLOR_RED,     COLOR_BLACK);
-            init_pair(CP_BORDER,    COLOR_BLUE,    COLOR_BLACK);
-        }
-
         if (!loadData()) {
             messageText = g_ioError;
             messageReturnScreen = SCR_MENU;
@@ -919,11 +948,11 @@ public:
 
         while (screen != -1) {
             getmaxyx(stdscr, rows, cols);
-            clear();
+            terminalClear();
 
             if (rows < 15 || cols < 50) {
                 drawTooSmall();
-                refresh();
+                cout.flush();
                 getch();
                 continue;
             }
@@ -944,7 +973,7 @@ public:
             if (screen != SCR_TOO_SMALL)
                 drawStatusBar();
 
-            refresh();
+            cout.flush();
 
             int ch = getch();
             switch (screen) {
@@ -967,17 +996,11 @@ public:
 
 private:
     void useAttr(int pair, bool bold) {
-        if (has_colors()) {
-            attron(COLOR_PAIR(pair));
-            if (bold) attron(A_BOLD);
-        } else if (bold) {
-            attron(A_BOLD);
-        }
+        terminalSetAttr(pair, bold);
     }
 
     void offAttr(int pair, bool bold) {
-        if (bold) attroff(A_BOLD);
-        if (has_colors()) attroff(COLOR_PAIR(pair));
+        terminalResetAttr();
     }
 
     void drawBox(int y, int x, int h, int w) {
@@ -985,15 +1008,10 @@ private:
 
         useAttr(CP_BORDER, false);
 
-        mvhline(y, x + 1, ACS_HLINE, w - 2);
-        mvhline(y + h - 1, x + 1, ACS_HLINE, w - 2);
-        mvvline(y + 1, x, ACS_VLINE, h - 2);
-        mvvline(y + 1, x + w - 1, ACS_VLINE, h - 2);
-
-        mvaddch(y, x, ACS_ULCORNER);
-        mvaddch(y, x + w - 1, ACS_URCORNER);
-        mvaddch(y + h - 1, x, ACS_LLCORNER);
-        mvaddch(y + h - 1, x + w - 1, ACS_LRCORNER);
+        printUtf8At(y, x, "+" + string(w - 2, '-') + "+");
+        for (int row = 1; row < h - 1; ++row)
+            printUtf8At(y + row, x, "|" + string(w - 2, ' ') + "|");
+        printUtf8At(y + h - 1, x, "+" + string(w - 2, '-') + "+");
 
         offAttr(CP_BORDER, false);
     }
@@ -1049,12 +1067,12 @@ private:
         }
 
         useAttr(CP_HEADER, false);
-        attron(A_REVERSE);
+        terminalReverseOn();
 
         string line = fitPad(status, static_cast<size_t>(cols));
         printUtf8At(rows - 1, 0, line);
 
-        attroff(A_REVERSE);
+        terminalReverseOff();
         offAttr(CP_HEADER, false);
     }
 
@@ -1172,7 +1190,7 @@ private:
             printUtf8At(1, x, fitPad("Не позже", dueW));
 
         offAttr(CP_SECONDARY, true);
-        mvhline(2, 0, ACS_HLINE, cols);
+        printUtf8At(2, 0, string(cols, '-'));
     }
 
     void drawTaskList() {
@@ -1219,7 +1237,7 @@ private:
             if (selected) useAttr(CP_SELECTED, true);
             else useAttr(CP_NORMAL, false);
 
-            mvhline(y, 0, ' ', cols);
+            printUtf8At(y, 0, string(cols, ' '));
 
             string prefix = listPrefix(idx);
             int nameX = static_cast<int>(utf8Len(prefix));
@@ -1522,7 +1540,7 @@ private:
             printUtf8At(lineY, valueX, fitPad(display, static_cast<size_t>(valueW)));
 
             if (active)
-                move(lineY, valueX + static_cast<int>(utf8Len(display)));
+                terminalMove(lineY, valueX + static_cast<int>(utf8Len(display)));
 
             if (active) offAttr(CP_SELECTED, false);
             else offAttr(CP_NORMAL, false);
@@ -1593,7 +1611,7 @@ private:
         printUtf8At(4, 2 + numW + gap + dateW + gap, fitPad("Прошло с предыдущего", static_cast<size_t>(gapW)));
         offAttr(CP_SECONDARY, true);
 
-        mvhline(5, 2, ACS_HLINE, max(1, cols - 4));
+        printUtf8At(5, 2, string(max(1, cols - 4), '-'));
 
         for (int row = 0; row < visible; ++row) {
             int idx = historyScroll + row;
@@ -1674,17 +1692,21 @@ private:
 
             useAttr(CP_HEADER, true);
             string head = centerText(headers[c], static_cast<size_t>(colW));
-            if (c == kanbanCol) attron(A_REVERSE);
+            if (c == kanbanCol) terminalReverseOn();
             printUtf8At(startY, x, head);
-            if (c == kanbanCol) attroff(A_REVERSE);
+            if (c == kanbanCol) terminalReverseOff();
             offAttr(CP_HEADER, true);
 
             useAttr(CP_BORDER, false);
-            mvhline(startY + 1, x, ACS_HLINE, colW);
-            if (c > 0)
-                mvvline(startY + 1, x - 1, ACS_VLINE, bodyH);
-            if (c == 2)
-                mvvline(startY + 1, x + colW, ACS_VLINE, bodyH);
+            printUtf8At(startY + 1, x, string(colW, '-'));
+            if (c > 0) {
+                for (int vy = startY + 2; vy <= startY + bodyH; ++vy)
+                    printUtf8At(vy, x - 1, "|");
+            }
+            if (c == 2) {
+                for (int vy = startY + 2; vy <= startY + bodyH; ++vy)
+                    printUtf8At(vy, x + colW, "|");
+            }
             offAttr(CP_BORDER, false);
 
             int visible = bodyH - 1;
@@ -1850,7 +1872,7 @@ private:
         offAttr(CP_NORMAL, false);
 
         useAttr(CP_SELECTED, true);
-        mvaddstr(y + boxH - 2, x + (boxW - 6) / 2, "[ OK ]");
+        printUtf8At(y + boxH - 2, x + (boxW - 6) / 2, "[ OK ]");
         offAttr(CP_SELECTED, true);
     }
 
