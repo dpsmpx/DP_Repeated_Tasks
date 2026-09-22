@@ -99,6 +99,7 @@ static size_t utf8Len(const string& s) {
 }
 
 static string utf8Trunc(const string& s, size_t maxChars);
+static void terminalMove(int y, int x);
 
 static string displaySafe(const string& s) {
     string r = s;
