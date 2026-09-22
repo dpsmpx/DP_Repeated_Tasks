@@ -1,0 +1,45 @@
+name: probe-ncurses-utf8-v6
+
+on:
+  push:
+    paths:
+      - 'DP_Rep_Tasks_ncs.cpp'
+      - '.github/workflows/probe-ncurses-utf8-v6.yml'
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install ncurses
+        run: sudo apt-get update && sudo apt-get install -y libncurses-dev
+      - name: Build probe
+        run: |
+          cat > probe.cpp <<'CPP'
+          #include <ncurses.h>
+          #include <locale.h>
+          int main() {
+              const char* p = setlocale(LC_ALL, "C.UTF-8");
+              initscr();
+              cbreak();
+              noecho();
+              meta(stdscr, TRUE);
+              mvaddstr(1, 0, "СПИСОК ЗАДАЧ");
+              refresh();
+              getch();
+              endwin();
+              return p == 0;
+          }
+          CPP
+          g++ -std=c++98 -Wall -Wextra -Wpedantic -O2 probe.cpp -lncurses -o probe
+      - name: Show actual terminal bytes
+        run: |
+          printf 'q' | TERM=xterm script -q -e -c 'stty cols 50 rows 10; ./probe' /tmp/probe.log >/dev/null
+          python3 - <<'PY'
+          from pathlib import Path
+          data = Path('/tmp/probe.log').read_bytes()
+          print('BYTES=', data)
+          print('UTF8=', 'СПИСОК ЗАДАЧ'.encode('utf-8'))
+          print('UTF8_PRESENT=', 'СПИСОК ЗАДАЧ'.encode('utf-8') in data)
+          print('M_DASH_PRESENT=', b'M-' in data)
+          PY
