@@ -1,0 +1,17 @@
+name: Check ncurses version
+
+on:
+  push:
+    paths:
+      - 'DP_Rep_Tasks_ncs.cpp'
+      - '.github/workflows/check-ncurses.yml'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build C++98
+        run: g++ -std=c++98 -Wall -Wextra -Wpedantic -O2 DP_Rep_Tasks_ncs.cpp -lncurses -o dp_rep_tasks_ncs
+      - name: Build sanitized
+        run: g++ -std=c++98 -Wall -Wextra -Wpedantic -O1 -g -fsanitize=address,undefined DP_Rep_Tasks_ncs.cpp -lncurses -o dp_rep_tasks_ncs_san
