@@ -1,0 +1,49 @@
+name: verify-ncurses-v10
+
+on:
+  push:
+    paths:
+      - 'DP_Rep_Tasks_ncs.cpp'
+      - '.github/workflows/verify-ncurses-v10.yml'
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install ncurses
+        run: sudo apt-get update && sudo apt-get install -y libncurses-dev
+      - name: Build and ASAN
+        run: |
+          g++ -std=c++98 -Wall -Wextra -Wpedantic -O2 DP_Rep_Tasks_ncs.cpp -lncurses -o app
+          g++ -std=c++98 -Wall -Wextra -Wpedantic -O1 -g -fsanitize=address,undefined DP_Rep_Tasks_ncs.cpp -lncurses -o app_san
+      - name: Static renderer and navigation verification
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          s = Path("DP_Rep_Tasks_ncs.cpp").read_text(encoding="utf-8")
+          forbidden = ["mvprintw(", "mvhline(", "mvvline(", "mvaddch(", "mvaddstr(", "get_wch(", "mvaddnwstr("]
+          for token in forbidden:
+              if token in s:
+                  raise SystemExit("forbidden UI call: " + token)
+          for token in ["static string displaySafe", "static void printUtf8At", "terminalClear()", "terminalMove", "[B]"]:
+              if token not in s:
+                  raise SystemExit("missing renderer/navigation feature: " + token)
+          if "[Esc]" in s:
+              raise SystemExit("Esc-only UI hint remains")
+          if "use_legacy_coding" in s:
+              raise SystemExit("legacy ncurses UTF-8 workaround remains")
+          PY
+      - name: Runtime UTF-8, B-back, and no-wrap verification
+        env:
+          LANG: C
+          LC_ALL: C
+        run: |
+          rm -f repeated_tasks.dat repeated_tasks.dat.tmp repeated_tasks.dat.bak
+          printf '%s\n' 'RTASKS3' '2' '1' 'BEGIN' '1' 'Очень длинная русская задача для проверки правой границы терминала 1234567890' 'Описание не должно физически переноситься на следующую строку автоматически.' '1' '0' '0' '0' '0' '0' '0' '0' 'END' > repeated_tasks.dat
+          timeout 5s sh -c "printf '\n\n5bbbq' | TERM=xterm script -q -e -c 'stty cols 50 rows 24; ./app_san' /tmp/app.log >/dev/null"
+          grep -a -q 'Очень длинная' /tmp/app.log
+          grep -a -q 'СПИСОК ЗАДАЧ' /tmp/app.log
+          grep -a -q 'ИСТОРИЯ ВЫПОЛНЕНИЙ' /tmp/app.log
+          ! grep -a -q 'M-' /tmp/app.log
+          grep -a -q '^RTASKS3$' repeated_tasks.dat
