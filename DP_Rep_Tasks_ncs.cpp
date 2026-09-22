@@ -5,7 +5,7 @@
 // Интерфейс: ncurses, адаптивная разметка, клавиатурная навигация.
 //
 // Сборка: C++98 + ncurses.
-// Пример: g++ -std=c++98 -Wall -Wextra -Wpedantic -O2 -o dp_rep_tasks_ncs DP_Rep_Tasks_ncs.cpp -lncurses
+// Пример: g++ -std=c++98 -Wall -Wextra -Wpedantic -O2 -o dp_rep_tasks_ncs DP_Rep_Tasks_ncs.cpp -lncursesw
 //
 // Данные: repeated_tasks.dat. Формат RTASKS3 и все проверки хранения
 // полностью совместимы с основной версией.
@@ -24,6 +24,7 @@
 #include <sstream>
 #include <cstdlib>
 #include <clocale>
+#include <climits>
 
 using namespace std;
 
@@ -84,6 +85,126 @@ static Urgency toUrgency(int v) {
 // ===================== UTF-8 =====================
 // Для интерфейса считаем кодовые точки. Для русского/латинского текста
 // это совпадает с занимаемой шириной; исходные строки никогда не меняются.
+
+// UTF-8 -> wide ncurses: выводим русские строки как символы, а не как байты.
+static bool isUtf8LocaleName(const char* name) {
+    if (name == 0) return false;
+    return strstr(name, "UTF-8") != 0 || strstr(name, "utf8") != 0 ||
+           strstr(name, "Utf8") != 0 || strstr(name, "UTF8") != 0;
+}
+
+static void initUtf8Locale() {
+    const char* current = setlocale(LC_CTYPE, "");
+    if (isUtf8LocaleName(current)) return;
+
+    static const char* candidates[] = {
+        "C.UTF-8",
+        "C.utf8",
+        "ru_RU.UTF-8",
+        "en_US.UTF-8",
+        0
+    };
+
+    for (int i = 0; candidates[i] != 0; ++i) {
+        current = setlocale(LC_CTYPE, candidates[i]);
+        if (isUtf8LocaleName(current)) return;
+    }
+}
+
+static bool decodeUtf8(const string& s, size_t& pos, unsigned long& cp) {
+    if (pos >= s.size()) return false;
+
+    unsigned char c0 = static_cast<unsigned char>(s[pos]);
+    if (c0 < 0x80) {
+        cp = c0;
+        ++pos;
+        return true;
+    }
+
+    int need = 0;
+    unsigned long value = 0;
+    unsigned long minValue = 0;
+
+    if ((c0 & 0xE0) == 0xC0) {
+        need = 1;
+        value = c0 & 0x1F;
+        minValue = 0x80;
+    } else if ((c0 & 0xF0) == 0xE0) {
+        need = 2;
+        value = c0 & 0x0F;
+        minValue = 0x800;
+    } else if ((c0 & 0xF8) == 0xF0) {
+        need = 3;
+        value = c0 & 0x07;
+        minValue = 0x10000;
+    } else {
+        ++pos;
+        cp = static_cast<unsigned long>('?');
+        return false;
+    }
+
+    if (pos + static_cast<size_t>(need) >= s.size()) {
+        ++pos;
+        cp = static_cast<unsigned long>('?');
+        return false;
+    }
+
+    for (int i = 1; i <= need; ++i) {
+        unsigned char c = static_cast<unsigned char>(s[pos + static_cast<size_t>(i)]);
+        if ((c & 0xC0) != 0x80) {
+            ++pos;
+            cp = static_cast<unsigned long>('?');
+            return false;
+        }
+        value = (value << 6) | (c & 0x3F);
+    }
+
+    pos += static_cast<size_t>(need + 1);
+
+    if (value < minValue || value > 0x10FFFFUL ||
+        (value >= 0xD800UL && value <= 0xDFFFUL)) {
+        cp = static_cast<unsigned long>('?');
+        return false;
+    }
+
+    cp = value;
+    return true;
+}
+
+static wstring utf8ToWide(const string& s) {
+    wstring out;
+    size_t pos = 0;
+
+    while (pos < s.size()) {
+        unsigned long cp = 0;
+        if (!decodeUtf8(s, pos, cp)) cp = static_cast<unsigned long>('?');
+
+#if WCHAR_MAX >= 0x10FFFF
+        out.push_back(static_cast<wchar_t>(cp));
+#else
+        if (cp <= 0xFFFFUL) {
+            out.push_back(static_cast<wchar_t>(cp));
+        } else {
+            cp -= 0x10000UL;
+            out.push_back(static_cast<wchar_t>(0xD800UL + (cp >> 10)));
+            out.push_back(static_cast<wchar_t>(0xDC00UL + (cp & 0x3FFUL)));
+        }
+#endif
+    }
+
+    return out;
+}
+
+static void printUtf8At(int y, int x, const string& text) {
+    if (y < 0 || x < 0 || y >= LINES || x >= COLS) return;
+
+    wstring wide = utf8ToWide(text);
+    int maxChars = COLS - x;
+    if (maxChars <= 0) return;
+
+    mvaddnwstr(y, x, wide.c_str(), maxChars);
+}
+
 
 static size_t utf8Len(const string& s) {
     size_t n = 0;
@@ -832,6 +953,7 @@ class Application {
     int messageReturnScreen;
 
     int messageReturnIndex;
+    bool inputIsKey;
 
     static const int CP_HEADER    = 1;
     static const int CP_NORMAL    = 2;
@@ -851,12 +973,12 @@ public:
           historyTaskId(-1), historySel(0), historyScroll(0),
           kanbanMode(0), kanbanCol(0),
           confirmKind(CONF_NONE), confirmTaskId(-1),
-          messageReturnScreen(SCR_MENU), messageReturnIndex(0) {
+          messageReturnScreen(SCR_MENU), messageReturnIndex(0), inputIsKey(false) {
         kanbanRow[0] = kanbanRow[1] = kanbanRow[2] = 0;
     }
 
     int run() {
-        setlocale(LC_ALL, "");
+        initUtf8Locale();
 
         initscr();
         cbreak();
@@ -914,7 +1036,10 @@ public:
 
             refresh();
 
-            int ch = getch();
+            wint_t input = 0;
+            int inputRc = get_wch(&input);
+            inputIsKey = (inputRc == KEY_CODE_YES);
+            int ch = (inputRc == ERR) ? ERR : static_cast<int>(input);
             switch (screen) {
                 case SCR_MENU:        handleMenu(ch);        break;
                 case SCR_LIST:        handleList(ch);        break;
@@ -973,7 +1098,7 @@ private:
         int x = (cols - static_cast<int>(utf8Len(t))) / 2;
         if (x < 0) x = 0;
 
-        mvprintw(0, x, "%s", fitOutput(t, cols).c_str());
+        printUtf8At(0, x, fitOutput(t, cols));;
 
         offAttr(CP_HEADER, true);
     }
@@ -1020,7 +1145,7 @@ private:
         attron(A_REVERSE);
 
         string line = fitPad(status, static_cast<size_t>(cols));
-        mvprintw(rows - 1, 0, "%s", line.c_str());
+        printUtf8At(rows - 1, 0, line);;
 
         attroff(A_REVERSE);
         offAttr(CP_HEADER, false);
@@ -1032,16 +1157,13 @@ private:
         string msg2 = intToStr(cols) + "x" + intToStr(rows);
 
         useAttr(CP_HEADER, true);
-        mvprintw(1, max(0, (cols - static_cast<int>(utf8Len(title))) / 2),
-                 "%s", title.c_str());
+        printUtf8At(1, max(0, (cols - static_cast<int>(utf8Len(title))) / 2), title);;
         offAttr(CP_HEADER, true);
 
         useAttr(CP_NORMAL, false);
-        mvprintw(3, max(0, (cols - static_cast<int>(utf8Len(msg1))) / 2),
-                 "%s", msg1.c_str());
-        mvprintw(4, max(0, (cols - static_cast<int>(utf8Len(msg2))) / 2),
-                 "%s", msg2.c_str());
-        mvprintw(6, 0, "%s", fitPad("Увеличьте окно терминала и продолжите.", static_cast<size_t>(cols)).c_str());
+        printUtf8At(3, max(0, (cols - static_cast<int>(utf8Len(msg1))) / 2), msg1);;
+        printUtf8At(4, max(0, (cols - static_cast<int>(utf8Len(msg2))) / 2), msg2);;
+        printUtf8At(6, 0, fitPad("Увеличьте окно терминала и продолжите.", static_cast<size_t>(cols)));;
         offAttr(CP_NORMAL, false);
     }
 
@@ -1130,19 +1252,19 @@ private:
         if (infoX < 1) infoX = 1;
 
         useAttr(CP_SECONDARY, true);
-        mvprintw(1, 0, "%s", fitOutput("Задача", static_cast<size_t>(max(1, infoX - 1))).c_str());
+        printUtf8At(1, 0, fitOutput("Задача", static_cast<size_t>(max(1, infoX - 1))));;
 
         int x = infoX;
-        mvprintw(1, x, "%s", fitPad("Прошло", ageW).c_str());
+        printUtf8At(1, x, fitPad("Прошло", ageW));;
         x += ageW + gap;
 
         if (showPrio) {
-            mvprintw(1, x, "%s", fitPad("С/Ср", prioW).c_str());
+            printUtf8At(1, x, fitPad("С/Ср", prioW));;
             x += prioW + gap;
         }
 
         if (showDue)
-            mvprintw(1, x, "%s", fitPad("Не позже", dueW).c_str());
+            printUtf8At(1, x, fitPad("Не позже", dueW));;
 
         offAttr(CP_SECONDARY, true);
         mvhline(2, 0, ACS_HLINE, cols);
@@ -1155,7 +1277,7 @@ private:
         string count = "Задач: " + intToStr(static_cast<long long>(flat.size()));
         if (g_dirty) count += "   *";
         useAttr(CP_SECONDARY, false);
-        mvprintw(0, 2, "%s", fitOutput(count, static_cast<size_t>(max(1, cols - 4))).c_str());
+        printUtf8At(0, 2, fitOutput(count, static_cast<size_t>(max(1, cols - 4))));;
         offAttr(CP_SECONDARY, false);
         drawListHeaders();
 
@@ -1200,23 +1322,23 @@ private:
             int nameW = infoX - nameX - 1;
             if (nameW < 1) nameW = 1;
 
-            mvprintw(y, nameX, "%s", fitPad(name, static_cast<size_t>(nameW)).c_str());
+            printUtf8At(y, nameX, fitPad(name, static_cast<size_t>(nameW)));;
 
             int x = infoX;
             string age = "[" + t->formatAgo() + "]";
-            mvprintw(y, x, "%s", fitPad(age, ageW).c_str());
+            printUtf8At(y, x, fitPad(age, ageW));;
             x += ageW + gap;
 
             if (showPrio) {
                 string prio = "С:" + levelShort(static_cast<int>(t->difficulty))
                             + " Ср:" + levelShort(static_cast<int>(t->urgency));
-                mvprintw(y, x, "%s", fitPad(prio, prioW).c_str());
+                printUtf8At(y, x, fitPad(prio, prioW));;
                 x += prioW + gap;
             }
 
             if (showDue) {
                 string due = t->hasDueDate ? t->formatDue() : "-";
-                mvprintw(y, x, "%s", fitPad(due, dueW).c_str());
+                printUtf8At(y, x, fitPad(due, dueW));;
             }
 
             if (selected) offAttr(CP_SELECTED, true);
@@ -1225,7 +1347,7 @@ private:
     }
 
     void drawMenu() {
-        drawTitleLine("R e p e a t e d T a s k s");
+        drawTitleLine("Repeated Tasks");
 
         const char* items[7] = {
             "Список задач",
@@ -1252,13 +1374,11 @@ private:
 
             if (i == menuSel) {
                 useAttr(CP_SELECTED, true);
-                mvprintw(lineY, x + 3, "%s",
-                         fitPad(line, static_cast<size_t>(boxW - 6)).c_str());
+                printUtf8At(lineY, x + 3, fitPad(line, static_cast<size_t>(boxW - 6)));;
                 offAttr(CP_SELECTED, true);
             } else {
                 useAttr(CP_NORMAL, false);
-                mvprintw(lineY, x + 3, "%s",
-                         fitPad(line, static_cast<size_t>(boxW - 6)).c_str());
+                printUtf8At(lineY, x + 3, fitPad(line, static_cast<size_t>(boxW - 6)));;
                 offAttr(CP_NORMAL, false);
             }
         }
@@ -1266,8 +1386,7 @@ private:
         useAttr(CP_SECONDARY, false);
         string info = "Корневых задач: " + intToStr(rootTasks.size());
         if (g_dirty) info += "   есть несохранённые изменения";
-        mvprintw(min(rows - 2, y + boxH + 1), x,
-                 "%s", fitOutput(info, static_cast<size_t>(boxW)).c_str());
+        printUtf8At(min(rows - 2, y + boxH + 1), x, fitOutput(info, static_cast<size_t>(boxW)));;
         offAttr(CP_SECONDARY, false);
     }
 
@@ -1317,8 +1436,7 @@ private:
 
         useAttr(CP_HEADER, true);
         string title = " ЗАДАЧА #" + intToStr(t->id) + " ";
-        mvprintw(y, x + max(2, (boxW - static_cast<int>(utf8Len(title))) / 2),
-                 "%s", title.c_str());
+        printUtf8At(y, x + max(2, (boxW - static_cast<int>(utf8Len(title))) / 2), title);;
         offAttr(CP_HEADER, true);
 
         int lineY = y + 2;
@@ -1330,18 +1448,15 @@ private:
                 string left = label.substr(0, colon + 1);
                 string right = label.substr(colon + 1);
                 useAttr(CP_SECONDARY, true);
-                mvprintw(lineY, x + 2, "%s",
-                         fitPad(left, 17).c_str());
+                printUtf8At(lineY, x + 2, fitPad(left, 17));;
                 offAttr(CP_SECONDARY, true);
 
                 useAttr(CP_NORMAL, false);
-                mvprintw(lineY, x + 20, "%s",
-                         fitOutput(trimStr(right), static_cast<size_t>(boxW - 23)).c_str());
+                printUtf8At(lineY, x + 20, fitOutput(trimStr(right), static_cast<size_t>(boxW - 23)));;
                 offAttr(CP_NORMAL, false);
             } else {
                 useAttr(CP_NORMAL, false);
-                mvprintw(lineY, x + 2,
-                         "%s", fitOutput(label, static_cast<size_t>(boxW - 4)).c_str());
+                printUtf8At(lineY, x + 2, fitOutput(label, static_cast<size_t>(boxW - 4)));;
                 offAttr(CP_NORMAL, false);
             }
             ++lineY;
@@ -1349,8 +1464,7 @@ private:
 
         useAttr(CP_SECONDARY, false);
         string actions = "[1] Выполнена   [2] Подзадача   [3] Ред.   [4] Удалить   [5] История";
-        mvprintw(y + boxH - 2, x + 2,
-                 "%s", fitOutput(actions, static_cast<size_t>(boxW - 4)).c_str());
+        printUtf8At(y + boxH - 2, x + 2, fitOutput(actions, static_cast<size_t>(boxW - 4)));;
         offAttr(CP_SECONDARY, false);
     }
 
@@ -1468,8 +1582,7 @@ private:
 
         useAttr(CP_HEADER, true);
         string title = formEdit ? " РЕДАКТИРОВАНИЕ " : " НОВАЯ ЗАДАЧА ";
-        mvprintw(y, x + max(2, (boxW - static_cast<int>(utf8Len(title))) / 2),
-                 "%s", title.c_str());
+        printUtf8At(y, x + max(2, (boxW - static_cast<int>(utf8Len(title))) / 2), title);;
         offAttr(CP_HEADER, true);
 
         int labelW = 19;
@@ -1484,7 +1597,7 @@ private:
             else useAttr(CP_SECONDARY, true);
 
             string label = fitPad(formLabel(i), static_cast<size_t>(labelW));
-            mvprintw(lineY, x + 2, "%s", label.c_str());
+            printUtf8At(lineY, x + 2, label);;
 
             if (active) offAttr(CP_SELECTED, true);
             else offAttr(CP_SECONDARY, true);
@@ -1500,8 +1613,7 @@ private:
             if (active) useAttr(CP_SELECTED, false);
             else useAttr(CP_NORMAL, false);
 
-            mvprintw(lineY, valueX, "%s",
-                     fitPad(display, static_cast<size_t>(valueW)).c_str());
+            printUtf8At(lineY, valueX, fitPad(display, static_cast<size_t>(valueW)));;
 
             if (active)
                 move(lineY, valueX + static_cast<int>(utf8Len(display)));
@@ -1521,16 +1633,15 @@ private:
         drawTitleLine("ИСТОРИЯ ВЫПОЛНЕНИЙ");
 
         useAttr(CP_SECONDARY, false);
-        mvprintw(0, 2, "%s",
-                 fitOutput("Задача: " + t->displayName(),
-                           static_cast<size_t>(max(1, cols - 4))).c_str());
+        printUtf8At(0, 2, fitOutput("Задача: " + t->displayName(),
+                           static_cast<size_t>(max(1, cols - 4))));;
         offAttr(CP_SECONDARY, false);
 
         if (t->history.empty()) {
             useAttr(CP_NORMAL, false);
-            mvprintw(3, 2, "%s", fitOutput(
+            printUtf8At(3, 2, fitOutput(
                 "История пуста. Клавиша A добавит прошлое выполнение.",
-                static_cast<size_t>(max(1, cols - 4))).c_str());
+                static_cast<size_t>(max(1, cols - 4))));;
             offAttr(CP_NORMAL, false);
             return;
         }
@@ -1544,8 +1655,8 @@ private:
                      + " до " + formatDuration(mx);
 
         useAttr(CP_SECONDARY, false);
-        mvprintw(2, 2, "%s", fitOutput(summary,
-                  static_cast<size_t>(max(1, cols - 4))).c_str());
+        printUtf8At(2, 2, fitOutput(summary,
+                  static_cast<size_t>(max(1, cols - 4))));;
         offAttr(CP_SECONDARY, false);
 
         int numW = 4;
@@ -1571,10 +1682,9 @@ private:
         if (historyScroll > maxScroll) historyScroll = maxScroll;
 
         useAttr(CP_SECONDARY, true);
-        mvprintw(4, 2, "%s", fitPad("№", numW).c_str());
-        mvprintw(4, 2 + numW + gap, "%s", fitPad("Когда", dateW).c_str());
-        mvprintw(4, 2 + numW + gap + dateW + gap, "%s",
-                 fitPad("Прошло с предыдущего", static_cast<size_t>(gapW)).c_str());
+        printUtf8At(4, 2, fitPad("№", numW));;
+        printUtf8At(4, 2 + numW + gap, fitPad("Когда", dateW));;
+        printUtf8At(4, 2 + numW + gap + dateW + gap, fitPad("Прошло с предыдущего", static_cast<size_t>(gapW)));;
         offAttr(CP_SECONDARY, true);
 
         mvhline(5, 2, ACS_HLINE, max(1, cols - 4));
@@ -1597,14 +1707,11 @@ private:
                     static_cast<long long>(
                         difftime(t->history[idx], t->history[idx - 1])));
 
-            mvprintw(y, 2, "%s",
-                     fitPad(intToStr(static_cast<long long>(idx + 1)),
-                            numW).c_str());
-            mvprintw(y, 2 + numW + gap, "%s",
-                     fitPad(formatStamp(t->history[idx]),
-                            dateW).c_str());
-            mvprintw(y, 2 + numW + gap + dateW + gap, "%s",
-                     fitPad(gapText, static_cast<size_t>(gapW)).c_str());
+            printUtf8At(y, 2, fitPad(intToStr(static_cast<long long>(idx + 1)),
+                            numW));;
+            printUtf8At(y, 2 + numW + gap, fitPad(formatStamp(t->history[idx]),
+                            dateW));;
+            printUtf8At(y, 2 + numW + gap + dateW + gap, fitPad(gapText, static_cast<size_t>(gapW)));;
 
             if (selected) offAttr(CP_SELECTED, true);
             else offAttr(CP_NORMAL, false);
@@ -1623,20 +1730,18 @@ private:
 
         useAttr(CP_HEADER, true);
         string title = " ДОБАВИТЬ ВЫПОЛНЕНИЕ ";
-        mvprintw(y, x + max(2, (boxW - static_cast<int>(utf8Len(title))) / 2),
-                 "%s", title.c_str());
+        printUtf8At(y, x + max(2, (boxW - static_cast<int>(utf8Len(title))) / 2), title);;
         offAttr(CP_HEADER, true);
 
         useAttr(CP_SECONDARY, true);
-        mvprintw(y + 2, x + 2, "%s", fitPad(
+        printUtf8At(y + 2, x + 2, fitPad(
             "Дата (ДД.ММ.ГГГГ ЧЧ:ММ):",
-            static_cast<size_t>(boxW - 4)).c_str());
+            static_cast<size_t>(boxW - 4)));;
         offAttr(CP_SECONDARY, true);
 
         useAttr(CP_SELECTED, false);
         string display = utf8Tail(dateInput, static_cast<size_t>(boxW - 8));
-        mvprintw(y + 3, x + 3, "%s",
-                 fitPad(display, static_cast<size_t>(boxW - 6)).c_str());
+        printUtf8At(y + 3, x + 3, fitPad(display, static_cast<size_t>(boxW - 6)));;
         move(y + 3, x + 3 + static_cast<int>(utf8Len(display)));
         offAttr(CP_SELECTED, false);
     }
@@ -1664,7 +1769,7 @@ private:
             useAttr(CP_HEADER, true);
             string head = centerText(headers[c], static_cast<size_t>(colW));
             if (c == kanbanCol) attron(A_REVERSE);
-            mvprintw(startY, x, "%s", head.c_str());
+            printUtf8At(startY, x, head);;
             if (c == kanbanCol) attroff(A_REVERSE);
             offAttr(CP_HEADER, true);
 
@@ -1699,8 +1804,7 @@ private:
 
                 string cell = items[idx]->displayName()
                             + " [" + items[idx]->formatAgo() + "]";
-                mvprintw(y, x + 1, "%s",
-                         fitPad(cell, static_cast<size_t>(colW - 2)).c_str());
+                printUtf8At(y, x + 1, fitPad(cell, static_cast<size_t>(colW - 2)));;
 
                 if (selected) offAttr(CP_SELECTED, true);
                 else offAttr(CP_NORMAL, false);
@@ -1781,15 +1885,13 @@ private:
         drawBox(y, x, boxH, boxW);
 
         useAttr(CP_HEADER, true);
-        mvprintw(y, x + max(2, (boxW - static_cast<int>(utf8Len(title))) / 2),
-                 "%s", title.c_str());
+        printUtf8At(y, x + max(2, (boxW - static_cast<int>(utf8Len(title))) / 2), title);;
         offAttr(CP_HEADER, true);
 
         useAttr(CP_NORMAL, false);
         int ty = y + 2;
         for (size_t i = 0; i < wrapped.size() && ty < y + boxH - 3; ++i, ++ty)
-            mvprintw(ty, x + 2, "%s",
-                     fitOutput(wrapped[i], static_cast<size_t>(boxW - 4)).c_str());
+            printUtf8At(ty, x + 2, fitOutput(wrapped[i], static_cast<size_t>(boxW - 4)));;
         offAttr(CP_NORMAL, false);
 
         string no = "[ Нет ]";
@@ -1803,13 +1905,13 @@ private:
 
         if (messageReturnIndex == 0) useAttr(CP_SELECTED, true);
         else useAttr(CP_NORMAL, false);
-        mvprintw(optionY, x + boxW / 2 - 12, "%s", no.c_str());
+        printUtf8At(optionY, x + boxW / 2 - 12, no);;
         if (messageReturnIndex == 0) offAttr(CP_SELECTED, true);
         else offAttr(CP_NORMAL, false);
 
         if (messageReturnIndex == 1) useAttr(CP_SELECTED, true);
         else useAttr(CP_NORMAL, false);
-        mvprintw(optionY, x + boxW / 2 + 2, "%s", yes.c_str());
+        printUtf8At(optionY, x + boxW / 2 + 2, yes);;
         if (messageReturnIndex == 1) offAttr(CP_SELECTED, true);
         else offAttr(CP_NORMAL, false);
     }
@@ -1832,19 +1934,17 @@ private:
 
         useAttr(CP_HEADER, true);
         string title = " СООБЩЕНИЕ ";
-        mvprintw(y, x + max(2, (boxW - static_cast<int>(utf8Len(title))) / 2),
-                 "%s", title.c_str());
+        printUtf8At(y, x + max(2, (boxW - static_cast<int>(utf8Len(title))) / 2), title);;
         offAttr(CP_HEADER, true);
 
         useAttr(CP_NORMAL, false);
         int ty = y + 2;
         for (size_t i = 0; i < wrapped.size() && ty < y + boxH - 2; ++i, ++ty)
-            mvprintw(ty, x + 2, "%s",
-                     fitOutput(wrapped[i], static_cast<size_t>(boxW - 4)).c_str());
+            printUtf8At(ty, x + 2, fitOutput(wrapped[i], static_cast<size_t>(boxW - 4)));;
         offAttr(CP_NORMAL, false);
 
         useAttr(CP_SELECTED, true);
-        mvprintw(y + boxH - 2, x + (boxW - 6) / 2, "[ OK ]");
+        mvaddstr(y + boxH - 2, x + (boxW - 6) / 2, "[ OK ]");;
         offAttr(CP_SELECTED, true);
     }
 
@@ -1852,8 +1952,29 @@ private:
 
     void appendInputByte(string& value, int ch) {
         if (value.size() >= 16384) return;
-        if (ch >= 32 && ch <= 255)
+
+        if (ch >= 32 && ch <= 255) {
             value.push_back(static_cast<char>(ch));
+            return;
+        }
+
+        if (ch >= 0x80 && ch <= 0x10FFFF &&
+            !(ch >= 0xD800 && ch <= 0xDFFF)) {
+            unsigned long cp = static_cast<unsigned long>(ch);
+            if (cp <= 0x7FFUL) {
+                value.push_back(static_cast<char>(0xC0 | (cp >> 6)));
+                value.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+            } else if (cp <= 0xFFFFUL) {
+                value.push_back(static_cast<char>(0xE0 | (cp >> 12)));
+                value.push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3F)));
+                value.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+            } else {
+                value.push_back(static_cast<char>(0xF0 | (cp >> 18)));
+                value.push_back(static_cast<char>(0x80 | ((cp >> 12) & 0x3F)));
+                value.push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3F)));
+                value.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+            }
+        }
     }
 
     void backspaceUtf8(string& value) {
@@ -2292,7 +2413,7 @@ private:
             return;
         }
 
-        if (isFormTextField(formField))
+        if (isFormTextField(formField) && !inputIsKey)
             appendInputByte(formTextRef(formField), ch);
     }
 
@@ -2402,7 +2523,8 @@ private:
             return;
         }
 
-        appendInputByte(dateInput, ch);
+        if (!inputIsKey)
+            appendInputByte(dateInput, ch);
     }
 
     // ===================== KANBAN =====================
