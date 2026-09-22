@@ -2280,7 +2280,7 @@ private:
     }
 
     void handleForm(int ch) {
-        if (ch == 27 || (ch == 'b' || ch == 'B') && !isFormTextField(formField)) {
+        if (ch == 27 || ((ch == 'b' || ch == 'B') && !isFormTextField(formField))) {
             curs_set(0);
             if (formEdit) screen = SCR_DETAIL;
             else if (formParentId >= 0) screen = SCR_DETAIL;
