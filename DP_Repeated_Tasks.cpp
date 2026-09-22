@@ -19,6 +19,7 @@
 #include <cstring>
 #include <fstream>
 #include <sstream>
+#include <cstdlib>
 
 using namespace std;
 
@@ -225,6 +226,66 @@ static string sanitizeField(const string& s) {
     return r;
 }
 
+// ===================== ВЫВОД / АДАПТАЦИЯ ШИРИНЫ =====================
+// Терминал сообщает ширину через COLUMNS. Если переменная не задана,
+// используется безопасный размер 80 символов.
+static size_t terminalWidth() {
+    const char* env = getenv("COLUMNS");
+    int width = 80;
+    int parsed = 0;
+    if (env != 0 && parseInt(trimStr(string(env)), parsed) && parsed >= 40 && parsed <= 200)
+        width = parsed;
+    return static_cast<size_t>(width);
+}
+
+// Для вывода можно безопасно сократить строку. Исходные данные при этом
+// никогда не изменяются.
+static string fitOutput(const string& s, size_t width) {
+    if (width == 0) return "";
+    if (utf8Len(s) <= width) return s;
+    if (width <= 2) return string(width, '.');
+    return utf8Trunc(s, width - 2) + "..";
+}
+
+static string fitPad(const string& s, size_t width) {
+    string r = fitOutput(s, width);
+    size_t len = utf8Len(r);
+    if (len < width) r.append(width - len, ' ');
+    return r;
+}
+
+// Единый заголовок для всех полноэкранных окон.
+static void printTitle(const string& title) {
+    size_t width = terminalWidth();
+    if (width < 6) {
+        cout << fitOutput(title, width) << "\n";
+        return;
+    }
+
+    size_t inner = width - 4;
+    string t = fitOutput(title, inner);
+    size_t left = (inner - utf8Len(t)) / 2;
+    size_t right = inner - utf8Len(t) - left;
+
+    cout << string(left + 1, '=') << " " << t << " "
+         << string(right + 1, '=') << "\n";
+}
+
+static void printField(const string& label, const string& value) {
+    const size_t LABEL = 16;
+    size_t width = terminalWidth();
+    size_t valueWidth = width > LABEL + 2 ? width - LABEL - 2 : 1;
+
+    cout << fitPad(label + ":", LABEL) << " "
+         << fitOutput(value, valueWidth) << "\n";
+}
+
+static void printMenuItem(int number, const string& text) {
+    size_t width = terminalWidth();
+    string item = intToStr(number) + ". " + text;
+    cout << fitOutput(item, width) << "\n";
+}
+
 // ===================== ФОРМАТИРОВАНИЕ ВРЕМЕНИ =====================
 // Раскладываем последовательным вычитанием. Прежняя версия считала
 // years = days/365 и months = days/30 независимо от одной величины, а остаток
@@ -330,21 +391,61 @@ struct Task {
 
     // flat: (номер на экране -> id задачи). Храним ИД, а не Task*:
     // указатель внутрь vector<Task> протухает при любом push_back в этот вектор.
-    void printTree(int level, int& num, vector< pair<int,int> >& flat) const {
-        for (int i = 0; i < level; ++i) cout << "  ";
+    void printTree(int level, int& num, vector< pair<int,int> >& flat, size_t numberWidth) const {
+        size_t width = terminalWidth();
         const bool leaf = subtasks.empty();
-        cout << (leaf ? "[ ] " : (expanded ? "[-] " : "[+] "))   // ровно 4 символа во всех случаях
-             << num << ". " << displayName()
-             << "  [" << formatAgo() << "]"
-             << "  C:" << diffToStr(difficulty)
-             << "  Cr:" << urgToStr(urgency);
-        if (hasDueDate) cout << "  -> " << formatDue();
-        cout << "\n";
+        const string marker = leaf ? "[ ] " : (expanded ? "[-] " : "[+] ");
+
+        string prefix = string(static_cast<size_t>(level * 2), ' ')
+                      + marker
+                      + fitPad(intToStr(num) + ". ", numberWidth + 2);
+
+        string ago  = "[" + formatAgo() + "]";
+        string diff = "C:" + diffToStr(difficulty);
+        string urg  = "Cr:" + urgToStr(urgency);
+        string due  = hasDueDate ? "-> " + formatDue() : "";
+
+        const size_t GAP = 2;
+        const size_t AGO = 18;
+        const size_t DIF = 9;
+        const size_t URG = 10;
+        const size_t DUE = 19;
+
+        bool showDiff = width >= 58;
+        bool showUrg  = width >= 68;
+        bool showDue  = hasDueDate && width >= 96;
+
+        size_t fixed = utf8Len(prefix) + GAP + AGO;
+        if (showDiff) fixed += GAP + DIF;
+        if (showUrg)  fixed += GAP + URG;
+        if (showDue)  fixed += GAP + DUE;
+
+        if (fixed + 2 > width) {
+            string line = prefix + displayName() + "  " + ago;
+            if (showDiff) line += "  " + diff;
+            if (showUrg)  line += "  " + urg;
+            if (showDue)  line += "  " + due;
+            cout << fitOutput(line, width) << "\n";
+        } else {
+            size_t nameWidth = width - fixed;
+            cout << prefix
+                 << fitPad(displayName(), nameWidth)
+                 << string(GAP, ' ')
+                 << fitPad(ago, AGO);
+            if (showDiff)
+                cout << string(GAP, ' ') << fitPad(diff, DIF);
+            if (showUrg)
+                cout << string(GAP, ' ') << fitPad(urg, URG);
+            if (showDue)
+                cout << string(GAP, ' ') << fitPad(due, DUE);
+            cout << "\n";
+        }
+
         flat.push_back(make_pair(num, id));
         ++num;
         if (expanded)
             for (size_t i = 0; i < subtasks.size(); ++i)
-                subtasks[i].printTree(level + 1, num, flat);
+                subtasks[i].printTree(level + 1, num, flat, numberWidth);
     }
 };
 
@@ -670,25 +771,33 @@ static bool loadData(bool quiet) {
 // ===================== КАНБАН-ДОСКА =====================
 // Раньше это были две почти одинаковые функции по 30 строк.
 static void showKanban(bool byDifficulty) {
-    const size_t COL = 22;
+    size_t width = terminalWidth();
+    size_t colWidth = (width - 10) / 3;
+    if (colWidth < 8) colWidth = 8;
 
-    clearScreen();
-    string sep = "+" + string(COL + 2, '-') + "+" + string(COL + 2, '-')
-               + "+" + string(COL + 2, '-') + "+";
+    string sep = "+" + string(colWidth + 2, '-') + "+"
+               + string(colWidth + 2, '-') + "+"
+               + string(colWidth + 2, '-') + "+";
     size_t inner = sep.size() - 2;
 
+    clearScreen();
+
     cout << sep << "\n";
-    cout << "|" << utf8Center(byDifficulty ? "К А Н Б А Н   Д О С К А   (С Л О Ж Н О С Т Ь)"
-                                           : "К А Н Б А Н   Д О С К А   (С Р О Ч Н О С Т Ь)",
-                              inner) << "|\n";
+    string title = byDifficulty
+        ? "К А Н Б А Н   Д О С К А   (С Л О Ж Н О С Т Ь)"
+        : "К А Н Б А Н   Д О С К А   (С Р О Ч Н О С Т Ь)";
+    cout << "|" << fitPad(utf8Center(fitOutput(title, inner), inner), inner) << "|\n";
     cout << sep << "\n";
-    cout << "| " << utf8Pad("ВЫСОКАЯ", COL) << " | " << utf8Pad("СРЕДНЯЯ", COL)
-         << " | " << utf8Pad("НИЗКАЯ", COL) << " |\n";
+
+    cout << "| " << fitPad("ВЫСОКАЯ", colWidth)
+         << " | " << fitPad("СРЕДНЯЯ", colWidth)
+         << " | " << fitPad("НИЗКАЯ", colWidth) << " |\n";
     cout << sep << "\n";
 
     vector<Task*> all;
     collectAll(all, rootTasks);
     vector<Task*> col[3];
+
     for (size_t i = 0; i < all.size(); ++i) {
         int k = byDifficulty ? static_cast<int>(all[i]->difficulty)
                              : static_cast<int>(all[i]->urgency);
@@ -696,22 +805,26 @@ static void showKanban(bool byDifficulty) {
     }
 
     size_t rows = 0;
-    for (int k = 0; k < 3; ++k) if (col[k].size() > rows) rows = col[k].size();
+    for (int k = 0; k < 3; ++k)
+        if (col[k].size() > rows) rows = col[k].size();
 
     if (rows == 0) {
-        cout << "| " << utf8Pad("(задач пока нет)", COL) << " | " << utf8Pad("", COL)
-             << " | " << utf8Pad("", COL) << " |\n";
+        cout << "| " << fitPad("(задач пока нет)", colWidth)
+             << " | " << fitPad("", colWidth)
+             << " | " << fitPad("", colWidth) << " |\n";
     }
+
     for (size_t r = 0; r < rows; ++r) {
         cout << "|";
         for (int k = 0; k < 3; ++k) {
             string cell;
             if (r < col[k].size())
                 cell = col[k][r]->displayName() + " [" + col[k][r]->formatAgo() + "]";
-            cout << " " << utf8Pad(cell, COL) << " |";   // по символам, а не по байтам
+            cout << " " << fitPad(cell, colWidth) << " |";
         }
         cout << "\n";
     }
+
     cout << sep << "\n";
     waitEnter();
 }
@@ -745,24 +858,22 @@ static bool askDateTime(time_t& outWhen) {
 
 static void addTask(Task* parent) {
     clearScreen();
-    cout << "========== НОВАЯ ЗАДАЧА ==========\n";
+    printTitle("НОВАЯ ЗАДАЧА");
     Task t;
 
-    cout << "Название: ";
+    cout << "\n";
+    cout << fitPad("Название:", 16) << " ";
     t.name = trimStr(getLine());
     if (g_inputClosed) return;
     if (t.name.empty()) {
-        cout << "Пустое название — отмена.\n";
+        cout << fitOutput("Пустое название — отмена.", terminalWidth()) << "\n";
         waitEnter();
-        return;   // id ещё не выдан, дыр в нумерации не остаётся
+        return;
     }
 
-    cout << "Описание (Enter - пропустить): ";
+    cout << fitPad("Описание:", 16) << " ";
     t.description = getLine();
 
-    // История пуста: задача создана, но ещё ни разу не выполнялась.
-    // Прежняя версия ставила lastDone = сейчас, и новая задача сразу
-    // показывала «<1ч», то есть основная метрика стартовала с неправды.
     if (confirm("Отметить, что задача уже выполнялась ранее?", false)) {
         cout << "Когда её выполняли последний раз?\n";
         time_t when;
@@ -772,15 +883,17 @@ static void addTask(Task* parent) {
     if (confirm("Задать необязательную пометку \"не позже\"?", false)) {
         time_t due;
         if (askDateTime(due)) {
-            t.dueDate    = due;
+            t.dueDate = due;
             t.hasDueDate = true;
         }
     }
 
-    cout << "Сложность (0-Высокая, 1-Средняя, 2-Низкая) [0]: ";
+    cout << fitPad("Сложность:", 16)
+         << " 0-Высокая, 1-Средняя, 2-Низкая [0]: ";
     t.difficulty = toDifficulty(getInt(0, 2, true, 0));
 
-    cout << "Срочность (0-Высокая, 1-Средняя, 2-Низкая) [2]: ";
+    cout << fitPad("Срочность:", 16)
+         << " 0-Высокая, 1-Средняя, 2-Низкая [2]: ";
     t.urgency = toUrgency(getInt(0, 2, true, 2));
 
     if (g_inputClosed) return;
@@ -799,39 +912,49 @@ static void addTask(Task* parent) {
 
 static void editTask(Task* t) {
     clearScreen();
-    cout << "========== РЕДАКТИРОВАНИЕ ==========\n";
+    printTitle("РЕДАКТИРОВАНИЕ");
+    cout << "\n";
 
-    cout << "Текущее название: " << t->displayName() << "\nНовое (Enter - не менять): ";
+    size_t width = terminalWidth();
+    size_t valueWidth = width > 17 ? width - 17 : 2;
+
+    cout << fitPad("Текущее имя:", 16) << " "
+         << fitOutput(t->displayName(), valueWidth) << "\n";
+    cout << fitPad("Новое имя:", 16) << " ";
     string s = trimStr(getLine());
     if (!s.empty()) { t->name = s; g_dirty = true; }
 
-    cout << "Текущее описание: " << (t->description.empty() ? "(пусто)" : t->description)
-         << "\nНовое (Enter - не менять): ";
+    string currentDescription = t->description.empty() ? "(пусто)" : t->description;
+    cout << fitPad("Описание:", 16) << " "
+         << fitOutput(currentDescription, valueWidth) << "\n";
+    cout << fitPad("Новое описание:", 16) << " ";
     s = getLine();
     if (!s.empty()) { t->description = s; g_dirty = true; }
 
-    cout << "Сложность сейчас: " << diffToStr(t->difficulty)
-         << "\nНовая (0-Выс, 1-Сред, 2-Низ, Enter - не менять): ";
+    cout << fitPad("Сложность:", 16) << " " << diffToStr(t->difficulty) << "\n";
+    cout << fitPad("Новая:", 16) << " 0-Выс, 1-Сред, 2-Низ, Enter - не менять: ";
     int d = getInt(-1, 2, true, -1);
     if (d >= 0) { t->difficulty = toDifficulty(d); g_dirty = true; }
 
-    cout << "Срочность сейчас: " << urgToStr(t->urgency)
-         << "\nНовая (0-Выс, 1-Сред, 2-Низ, Enter - не менять): ";
+    cout << fitPad("Срочность:", 16) << " " << urgToStr(t->urgency) << "\n";
+    cout << fitPad("Новая:", 16) << " 0-Выс, 1-Сред, 2-Низ, Enter - не менять: ";
     d = getInt(-1, 2, true, -1);
     if (d >= 0) { t->urgency = toUrgency(d); g_dirty = true; }
 
-    // Раньше пометку «не позже» можно было задать только при создании
-    // и уже никогда не изменить и не снять.
-    cout << "Пометка \"не позже\" сейчас: " << t->formatDue() << "\n";
-    cout << "0 - не менять, 1 - задать/изменить, 2 - снять [0]: ";
+    cout << fitPad("Не позже:", 16) << " " << t->formatDue() << "\n";
+    cout << fitPad("Изменить:", 16) << " 0-не менять, 1-задать/изменить, 2-снять [0]: ";
     int dd = getInt(0, 2, true, 0);
     if (dd == 1) {
         time_t due;
-        if (askDateTime(due)) { t->dueDate = due; t->hasDueDate = true; g_dirty = true; }
+        if (askDateTime(due)) {
+            t->dueDate = due;
+            t->hasDueDate = true;
+            g_dirty = true;
+        }
     } else if (dd == 2) {
         t->hasDueDate = false;
-        t->dueDate    = 0;
-        g_dirty       = true;
+        t->dueDate = 0;
+        g_dirty = true;
     }
 
     if (g_inputClosed) return;
@@ -850,38 +973,54 @@ static void showHistory(int taskId) {
         if (t == 0) return;
 
         clearScreen();
-        cout << "========== ИСТОРИЯ ВЫПОЛНЕНИЙ ==========\n";
-        cout << "Задача: " << t->displayName() << "\n\n";
+        printTitle("ИСТОРИЯ ВЫПОЛНЕНИЙ");
+
+        size_t width = terminalWidth();
+        cout << "\n";
+        printField("Задача", t->displayName());
 
         if (t->history.empty()) {
-            cout << "Задача ещё ни разу не отмечалась выполненной.\n";
+            cout << fitOutput("Задача ещё ни разу не отмечалась выполненной.", width) << "\n";
         } else {
-            cout << "Всего выполнений: " << t->doneCount() << "\n";
+            cout << fitOutput("Всего выполнений: " + intToStr(static_cast<long long>(t->doneCount())), width) << "\n";
+
             long long avg, mn, mx;
             if (t->intervalStats(avg, mn, mx)) {
-                cout << "Обычный интервал: " << formatDuration(avg)
-                     << "   (от " << formatDuration(mn) << " до " << formatDuration(mx) << ")\n";
+                string stats = "Обычный интервал: " + formatDuration(avg)
+                             + "   (от " + formatDuration(mn)
+                             + " до " + formatDuration(mx) + ")";
+                cout << fitOutput(stats, width) << "\n";
             }
-            cout << "Прошло с последнего: " << t->formatAgo() << "\n\n";
 
-            cout << "  №  Когда                  Прошло с предыдущего\n";
-            cout << "  -------------------------------------------------\n";
-            // Свежие сверху: обычно интересны последние несколько.
+            cout << fitOutput("Прошло с последнего: " + t->formatAgo(), width) << "\n\n";
+
+            const size_t NUM = 3;
+            const size_t DATE = 16;
+            size_t gapWidth = width > NUM + DATE + 5 ? width - NUM - DATE - 5 : 6;
+
+            cout << "  " << fitPad("№", NUM)
+                 << " " << fitPad("Когда", DATE)
+                 << " " << fitPad("Прошло с предыдущего", gapWidth) << "\n";
+            cout << string(width, '-') << "\n";
+
             for (size_t i = t->history.size(); i-- > 0; ) {
                 string gap = "-";
                 if (i > 0)
                     gap = formatDuration(
-                        static_cast<long long>(difftime(t->history[i], t->history[i-1])));
-                cout << "  " << utf8Pad(intToStr(static_cast<long long>(i + 1)), 2)
-                     << " " << utf8Pad(formatStamp(t->history[i]), 22)
-                     << " " << gap << "\n";
+                        static_cast<long long>(difftime(t->history[i], t->history[i - 1])));
+
+                cout << "  "
+                     << fitPad(intToStr(static_cast<long long>(i + 1)), NUM)
+                     << " " << fitPad(formatStamp(t->history[i]), DATE)
+                     << " " << fitPad(gap, gapWidth) << "\n";
             }
         }
 
-        cout << "\n1. Добавить прошлое выполнение\n";
-        cout << "2. Удалить ошибочную отметку\n";
-        cout << "0. Назад\n";
-        cout << "Выбор: ";
+        cout << "\n";
+        printMenuItem(1, "Добавить прошлое выполнение");
+        printMenuItem(2, "Удалить ошибочную отметку");
+        printMenuItem(0, "Назад");
+        cout << fitPad("Выбор:", 16) << " ";
 
         int c = getInt(0, 2, true, 0);
         if (g_inputClosed || c == 0) return;
@@ -892,13 +1031,14 @@ static void showHistory(int taskId) {
                 waitEnter();
                 continue;
             }
+
             cout << "Когда задача была выполнена?\n";
             time_t when;
             if (askDateTime(when)) {
                 if (difftime(when, time(0)) > 0) {
                     cout << "\nЭта дата в будущем — отметка не добавлена.\n";
                 } else {
-                    t->addCompletion(when);   // встанет на своё место по дате
+                    t->addCompletion(when);
                     g_dirty = true;
                     cout << "\nДобавлено. Всего выполнений: " << t->doneCount() << "\n";
                 }
@@ -906,6 +1046,7 @@ static void showHistory(int taskId) {
             }
         } else if (c == 2) {
             if (t->history.empty()) continue;
+
             cout << "Номер отметки для удаления (1-" << t->history.size() << ", 0-отмена): ";
             int n = getInt(0, static_cast<int>(t->history.size()), true, 0);
             if (n > 0) {
@@ -927,29 +1068,35 @@ static void taskDetails(int taskId) {
     while (true) {
         if (g_inputClosed) return;
         Task* t = findById(taskId, rootTasks);
-        if (t == 0) return;   // задачу удалили
+        if (t == 0) return;
 
         clearScreen();
-        cout << "========== ЗАДАЧА ==========\n";
-        cout << "Название:      " << t->displayName() << "\n";
-        cout << "Описание:      " << (t->description.empty() ? "-" : t->description) << "\n";
-        cout << "Послед.выполн: " << t->formatAgo() << (t->neverDone() ? "" : " назад") << "\n";
-        cout << "Выполнено раз: " << t->doneCount();
+        printTitle("ЗАДАЧА");
+        cout << "\n";
+
+        printField("Название", t->displayName());
+        printField("Описание", t->description.empty() ? "-" : t->description);
+        printField("Послед.выполн", t->formatAgo() + (t->neverDone() ? "" : " назад"));
+
+        string done = intToStr(static_cast<long long>(t->doneCount()));
         long long avg, mn, mx;
         if (t->intervalStats(avg, mn, mx))
-            cout << "   (обычно раз в " << formatDuration(avg) << ")";
+            done += "   (обычно раз в " + formatDuration(avg) + ")";
+        printField("Выполнено раз", done);
+
+        printField("Не позже", t->formatDue());
+        printField("Сложность", diffToStr(t->difficulty));
+        printField("Срочность", urgToStr(t->urgency));
+        printField("Подзадач", intToStr(static_cast<long long>(t->subtasks.size())));
+
         cout << "\n";
-        cout << "Не позже:      " << t->formatDue() << "\n";
-        cout << "Сложность:     " << diffToStr(t->difficulty) << "\n";
-        cout << "Срочность:     " << urgToStr(t->urgency) << "\n";
-        cout << "Подзадач:      " << t->subtasks.size() << "\n";
-        cout << "\n1. Отметить выполненной (сбросить счётчик)\n";
-        cout << "2. Добавить подзадачу\n";
-        cout << "3. Редактировать\n";
-        cout << "4. Удалить эту задачу\n";
-        cout << "5. История выполнений\n";
-        cout << "0. Назад\n";
-        cout << "Выбор: ";
+        printMenuItem(1, "Отметить выполненной (сбросить счётчик)");
+        printMenuItem(2, "Добавить подзадачу");
+        printMenuItem(3, "Редактировать");
+        printMenuItem(4, "Удалить эту задачу");
+        printMenuItem(5, "История выполнений");
+        printMenuItem(0, "Назад");
+        cout << fitPad("Выбор:", 16) << " ";
 
         int c = getInt(0, 5, true, 0);
         if (g_inputClosed || c == 0) return;
@@ -971,6 +1118,7 @@ static void taskDetails(int taskId) {
             if (n > 1)
                 cout << "ВНИМАНИЕ: вместе с задачей будут удалены все вложенные — всего "
                      << n << " шт.\n";
+
             if (confirm("Точно удалить?", false)) {
                 if (removeById(taskId, rootTasks)) {
                     g_dirty = true;
@@ -988,33 +1136,50 @@ static void showTaskList() {
         if (g_inputClosed) return;
 
         clearScreen();
-        cout << "========== СПИСОК ЗАДАЧ ==========\n";
+        printTitle("СПИСОК ЗАДАЧ");
+
         vector< pair<int,int> > flat;
+        vector<Task*> all;
+        collectAll(all, rootTasks);
+
+        size_t numberWidth = 1;
+        size_t count = all.size();
+        while (count >= 10) {
+            ++numberWidth;
+            count /= 10;
+        }
+
         int num = 1;
         for (size_t i = 0; i < rootTasks.size(); ++i)
-            rootTasks[i].printTree(0, num, flat);
+            rootTasks[i].printTree(0, num, flat, numberWidth);
 
         if (flat.empty()) {
-            cout << "(задач пока нет)\n";
+            cout << "\n" << fitOutput("(задач пока нет)", terminalWidth()) << "\n";
             waitEnter();
             return;
         }
 
-        cout << "\nВведите номер задачи для открытия,\n";
-        cout << "или -N чтобы свернуть/развернуть ветку, 0-назад: ";
+        cout << "\n";
+        cout << fitOutput("Введите номер задачи для открытия,", terminalWidth()) << "\n";
+        cout << fitOutput("или -N чтобы свернуть/развернуть ветку, 0-назад:", terminalWidth()) << " ";
+
         int choice = getInt(-(num - 1), num - 1, true, 0);
         if (g_inputClosed || choice == 0) return;
 
         int want = choice < 0 ? -choice : choice;
-        int id   = -1;
+        int id = -1;
         for (size_t i = 0; i < flat.size(); ++i)
-            if (flat[i].first == want) { id = flat[i].second; break; }
+            if (flat[i].first == want) {
+                id = flat[i].second;
+                break;
+            }
+
         if (id < 0) continue;
 
         if (choice < 0) {
             Task* target = findById(id, rootTasks);
-            // Сворачивать лист бессмысленно — у него нечего прятать.
-            if (target && !target->subtasks.empty()) target->expanded = !target->expanded;
+            if (target && !target->subtasks.empty())
+                target->expanded = !target->expanded;
         } else {
             taskDetails(id);
         }
@@ -1023,35 +1188,42 @@ static void showTaskList() {
 
 // ===================== ГЛАВНОЕ МЕНЮ =====================
 int main() {
-    // Процесс могли убить сигналом посреди записи (Android закрывает приложение
-    // в фоне). Тогда остаётся временный файл — рабочий при этом цел, но мусор
-    // занимает место во внутреннем хранилище.
     remove(FILENAME_TMP);
 
     loadData(false);
 
     while (true) {
         clearScreen();
-        cout << "+========================================+\n";
-        cout << "|          R e p e a t e d T a s k s     |\n";
-        cout << "+========================================+\n";
-        cout << "|  1. Список задач (дерево)              |\n";
-        cout << "|  2. Добавить корневую задачу           |\n";
-        cout << "|  3. Канбан-доска: СЛОЖНОСТЬ            |\n";
-        cout << "|  4. Канбан-доска: СРОЧНОСТЬ            |\n";
-        cout << "|  5. Сохранить на диск                  |\n";
-        cout << "|  6. Перезагрузить с диска              |\n";
-        cout << "|  0. Выход (с сохранением)              |\n";
-        cout << "+========================================+\n";
-        cout << "Корневых задач: " << rootTasks.size()
-             << (g_dirty ? "   [есть несохранённые изменения]" : "") << "\n";
-        cout << "Выбор: ";
+
+        size_t width = terminalWidth();
+        string sep = "+" + string(width > 2 ? width - 2 : 1, '-') + "+";
+        size_t inner = width > 2 ? width - 2 : 1;
+
+        cout << sep << "\n";
+        cout << "|" << fitPad(utf8Center(fitOutput("R e p e a t e d T a s k s", inner), inner), inner) << "|\n";
+        cout << sep << "\n";
+
+        string menu[] = {
+            "1. Список задач (дерево)",
+            "2. Добавить корневую задачу",
+            "3. Канбан-доска: СЛОЖНОСТЬ",
+            "4. Канбан-доска: СРОЧНОСТЬ",
+            "5. Сохранить на диск",
+            "6. Перезагрузить с диска",
+            "0. Выход (с сохранением)"
+        };
+
+        for (int i = 0; i < 7; ++i)
+            cout << "|" << fitPad(fitOutput(menu[i], inner), inner) << "|\n";
+
+        cout << sep << "\n";
+        string status = "Корневых задач: " + intToStr(static_cast<long long>(rootTasks.size()));
+        if (g_dirty) status += "   [есть несохранённые изменения]";
+        cout << fitOutput(status, width) << "\n";
+        cout << fitPad("Выбор:", 16) << " ";
 
         int choice = getInt(0, 6, true, 0);
 
-        // Ввод кончился (Ctrl+D, конвейер, закрытый терминал). Прежняя версия
-        // здесь зацикливалась навсегда: cin.clear() снимал eofbit, а ignore()
-        // тут же выставлял его обратно.
         if (g_inputClosed) {
             cout << "\nВвод закрыт — сохраняю и выхожу.\n";
             saveData(true);
@@ -1065,7 +1237,6 @@ int main() {
             case 4: showKanban(false); break;
             case 5: saveData(false); break;
             case 6:
-                // Перезагрузка затирает всё, что не записано на диск.
                 if (g_dirty && !confirm("\nЕсть несохранённые изменения. Они будут потеряны. Продолжить?", false))
                     break;
                 if (loadData(false))
