@@ -18,8 +18,8 @@ jobs:
         run: |
           set -euo pipefail
           rm -f repeated_tasks.dat repeated_tasks.dat.tmp repeated_tasks.dat.bak
-          printf 'aTest task\n\n\033qly\n' | TERM=xterm script -q -e -c 'stty cols 80 rows 24; ./app' /tmp/ncurses-smoke.log
+          printf 'j\nTest task\n\n\033q l\n' | TERM=xterm script -q -e -c 'stty cols 80 rows 24; ./app' /tmp/ncurses-smoke.log
           test -f repeated_tasks.dat
           grep -q '^RTASKS3$' repeated_tasks.dat
           grep -q '^Test task$' repeated_tasks.dat
-          grep -q '^2$' repeated_tasks.dat
+          grep -q '^2 repeated_tasks.dat
