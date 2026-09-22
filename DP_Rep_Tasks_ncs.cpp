@@ -974,6 +974,7 @@ public:
                 drawStatusBar();
 
             cout.flush();
+            untouchwin(stdscr);
 
             int ch = getch();
             switch (screen) {
@@ -1623,7 +1624,7 @@ private:
             if (selected) useAttr(CP_SELECTED, true);
             else useAttr(CP_NORMAL, false);
 
-            mvhline(y, 0, ' ', cols);
+            printUtf8At(y, 0, string(cols, ' '));
 
             string gapText = "-";
             if (idx > 0)
@@ -1666,7 +1667,7 @@ private:
         useAttr(CP_SELECTED, false);
         string display = utf8Tail(dateInput, static_cast<size_t>(boxW - 8));
         printUtf8At(y + 3, x + 3, fitPad(display, static_cast<size_t>(boxW - 6)));
-        move(y + 3, x + 3 + static_cast<int>(utf8Len(display)));
+        terminalMove(y + 3, x + 3 + static_cast<int>(utf8Len(display)));
         offAttr(CP_SELECTED, false);
     }
 
