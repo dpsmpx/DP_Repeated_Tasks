@@ -98,6 +98,11 @@ static size_t utf8Len(const string& s) {
     return n;
 }
 
+static void printUtf8At(int y, int x, const string& text) {
+    if (y < 0 || x < 0 || y >= LINES || x >= COLS) return;
+    mvaddstr(y, x, text.c_str());
+}
+
 static string utf8Trunc(const string& s, size_t maxChars) {
     size_t n = 0;
     for (size_t i = 0; i < s.size(); ++i) {
