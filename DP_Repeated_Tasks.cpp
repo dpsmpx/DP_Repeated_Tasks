@@ -934,7 +934,7 @@ static void taskDetails(int taskId) {
         cout << "Название:      " << t->displayName() << "\n";
         cout << "Описание:      " << (t->description.empty() ? "-" : t->description) << "\n";
         cout << "Послед.выполн: " << t->formatAgo() << (t->neverDone() ? "" : " назад") << "\n";
-        cout << "Выполнено раз:  " << t->doneCount();
+        cout << "Выполнено раз: " << t->doneCount();
         long long avg, mn, mx;
         if (t->intervalStats(avg, mn, mx))
             cout << "   (обычно раз в " << formatDuration(avg) << ")";
