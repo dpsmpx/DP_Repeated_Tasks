@@ -1019,31 +1019,31 @@ private:
 
         switch (screen) {
             case SCR_MENU:
-                status = "[Up/Down] Выбор  [Enter] Открыть  [S] Сохранить  [R] Обновить  [Q] Выход";
+                status = "[↑↓] Выбор  [Enter] Открыть  [S] Сохр.  [R] Обновить  [Q] Выход";
                 break;
             case SCR_LIST:
-                status = "[Up/Down] Выбор  [Enter] Детали  [+/-] Ветка  [A] Добавить  [E] Ред.  [D] Удалить  [X] Выполнена  [B] Меню";
+                status = "[B] Меню  [↑↓] Выбор  [Enter] Детали  [+/-] Ветка  [A] Доб.  [E] Ред.  [D] Уд.  [X] Вып.";
                 break;
             case SCR_DETAIL:
-                status = "[1] Выполнена  [2] Подзадача  [3] Ред.  [4] Удалить  [5] История  [B] Назад";
+                status = "[B] Назад  [1] Вып.  [2] Под.  [3] Ред.  [4] Уд.  [5] Ист.";
                 break;
             case SCR_FORM:
-                status = "[Tab/Up/Down] Поле  [Left/Right] Значение  [Enter] Сохранить  [B] Отмена";
+                status = "[B] Отмена  [Tab/↑↓] Поле  [←→] Знач.  [Enter] Сохр.";
                 break;
             case SCR_KANBAN:
-                status = "[Left/Right] Колонка  [Up/Down] Задача  [Tab] Режим  [Enter] Детали  [Esc] Меню";
+                status = "[B] Меню  [←→] Кол.  [↑↓] Задача  [Enter] Детали  [Tab] Режим";
                 break;
             case SCR_HISTORY:
-                status = "[Up/Down] Выбор  [A] Добавить  [D] Удалить  [Esc] Назад";
+                status = "[B] Назад  [↑↓] Выбор  [A] Доб.  [D] Уд.";
                 break;
             case SCR_HISTORY_ADD:
-                status = "[Enter] Сохранить  [Esc] Отмена";
+                status = "[B] Отмена  [Enter] Сохр.";
                 break;
             case SCR_CONFIRM:
-                status = "[Left/Right] Выбор  [Enter] Подтвердить  [Esc] Отмена";
+                status = "[B] Отмена  [←→] Выбор  [Enter] Подтвердить";
                 break;
             case SCR_MESSAGE:
-                status = "[Enter] OK";
+                status = "[B] Назад  [Enter/Space] OK";
                 break;
             default:
                 status = "";
@@ -1161,7 +1161,9 @@ private:
         if (infoX < 1) infoX = 1;
 
         useAttr(CP_SECONDARY, true);
-        printUtf8At(1, 0, fitOutput("Задача", static_cast<size_t>(max(1, infoX - 1))));
+        int taskHeaderX = min(max(12, infoX - 1), max(0, cols - fixed - 1));
+        printUtf8At(1, taskHeaderX, fitOutput("Задача",
+                     static_cast<size_t>(max(1, infoX - taskHeaderX - 1))));
 
         int x = infoX;
         printUtf8At(1, x, fitPad("Прошло", ageW));
@@ -1184,9 +1186,10 @@ private:
         drawTitleLine("СПИСОК ЗАДАЧ");
 
         string count = "Задач: " + intToStr(static_cast<long long>(flat.size()));
-        if (g_dirty) count += "   *";
+        if (g_dirty) count += " *";
         useAttr(CP_SECONDARY, false);
-        printUtf8At(0, 2, fitOutput(count, static_cast<size_t>(max(1, cols - 4))));
+        printUtf8At(1, 0, fitOutput(count,
+                     static_cast<size_t>(max(1, cols - 1))));
         offAttr(CP_SECONDARY, false);
         drawListHeaders();
 
@@ -1542,7 +1545,7 @@ private:
         drawTitleLine("ИСТОРИЯ ВЫПОЛНЕНИЙ");
 
         useAttr(CP_SECONDARY, false);
-        printUtf8At(0, 2, fitOutput("Задача: " + t->displayName(),
+        printUtf8At(1, 2, fitOutput("Задача: " + t->displayName(),
                            static_cast<size_t>(max(1, cols - 4))));
         offAttr(CP_SECONDARY, false);
 
@@ -2492,6 +2495,8 @@ private:
                 break;
 
             case 27:
+            case 'b':
+            case 'B':
                 screen = SCR_MENU;
                 break;
         }
