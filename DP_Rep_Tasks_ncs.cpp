@@ -98,9 +98,28 @@ static size_t utf8Len(const string& s) {
     return n;
 }
 
+static string utf8Trunc(const string& s, size_t maxChars);
+
+static string displaySafe(const string& s) {
+    string r = s;
+    for (size_t i = 0; i < r.size(); ++i) {
+        unsigned char ch = static_cast<unsigned char>(r[i]);
+        if (ch < 32 || ch == 127) r[i] = ' ';
+    }
+    return r;
+}
+
 static void printUtf8At(int y, int x, const string& text) {
     if (y < 0 || x < 0 || y >= LINES || x >= COLS) return;
-    mvaddstr(y, x, text.c_str());
+
+    string safe = displaySafe(text);
+    int remaining = COLS - x;
+    if (remaining <= 0) return;
+
+    if (utf8Len(safe) > static_cast<size_t>(remaining))
+        safe = utf8Trunc(safe, static_cast<size_t>(remaining));
+
+    mvaddstr(y, x, safe.c_str());
 }
 
 static string utf8Trunc(const string& s, size_t maxChars) {
@@ -988,7 +1007,7 @@ private:
         int x = (cols - static_cast<int>(utf8Len(t))) / 2;
         if (x < 0) x = 0;
 
-        printUtf8At(0, x, fitOutput(t, cols));;
+        printUtf8At(0, x, fitOutput(t, cols));
 
         offAttr(CP_HEADER, true);
     }
@@ -1003,13 +1022,13 @@ private:
                 status = "[Up/Down] Выбор  [Enter] Открыть  [S] Сохранить  [R] Обновить  [Q] Выход";
                 break;
             case SCR_LIST:
-                status = "[Up/Down] Выбор  [Enter] Детали  [+/-] Ветка  [A] Добавить  [E] Ред.  [D] Удалить  [X] Выполнена  [Esc] Меню";
+                status = "[Up/Down] Выбор  [Enter] Детали  [+/-] Ветка  [A] Добавить  [E] Ред.  [D] Удалить  [X] Выполнена  [B] Меню";
                 break;
             case SCR_DETAIL:
-                status = "[1] Выполнена  [2] Подзадача  [3] Ред.  [4] Удалить  [5] История  [Esc] Назад";
+                status = "[1] Выполнена  [2] Подзадача  [3] Ред.  [4] Удалить  [5] История  [B] Назад";
                 break;
             case SCR_FORM:
-                status = "[Tab/Up/Down] Поле  [Left/Right] Значение  [Enter] Сохранить  [Esc] Отмена";
+                status = "[Tab/Up/Down] Поле  [Left/Right] Значение  [Enter] Сохранить  [B] Отмена";
                 break;
             case SCR_KANBAN:
                 status = "[Left/Right] Колонка  [Up/Down] Задача  [Tab] Режим  [Enter] Детали  [Esc] Меню";
@@ -1035,7 +1054,7 @@ private:
         attron(A_REVERSE);
 
         string line = fitPad(status, static_cast<size_t>(cols));
-        printUtf8At(rows - 1, 0, line);;
+        printUtf8At(rows - 1, 0, line);
 
         attroff(A_REVERSE);
         offAttr(CP_HEADER, false);
@@ -1047,13 +1066,13 @@ private:
         string msg2 = intToStr(cols) + "x" + intToStr(rows);
 
         useAttr(CP_HEADER, true);
-        printUtf8At(1, max(0, (cols - static_cast<int>(utf8Len(title))) / 2), title);;
+        printUtf8At(1, max(0, (cols - static_cast<int>(utf8Len(title))) / 2), title);
         offAttr(CP_HEADER, true);
 
         useAttr(CP_NORMAL, false);
-        printUtf8At(3, max(0, (cols - static_cast<int>(utf8Len(msg1))) / 2), msg1);;
-        printUtf8At(4, max(0, (cols - static_cast<int>(utf8Len(msg2))) / 2), msg2);;
-        printUtf8At(6, 0, fitPad("Увеличьте окно терминала и продолжите.", static_cast<size_t>(cols)));;
+        printUtf8At(3, max(0, (cols - static_cast<int>(utf8Len(msg1))) / 2), msg1);
+        printUtf8At(4, max(0, (cols - static_cast<int>(utf8Len(msg2))) / 2), msg2);
+        printUtf8At(6, 0, fitPad("Увеличьте окно терминала и продолжите.", static_cast<size_t>(cols)));
         offAttr(CP_NORMAL, false);
     }
 
@@ -1142,19 +1161,19 @@ private:
         if (infoX < 1) infoX = 1;
 
         useAttr(CP_SECONDARY, true);
-        printUtf8At(1, 0, fitOutput("Задача", static_cast<size_t>(max(1, infoX - 1))));;
+        printUtf8At(1, 0, fitOutput("Задача", static_cast<size_t>(max(1, infoX - 1))));
 
         int x = infoX;
-        printUtf8At(1, x, fitPad("Прошло", ageW));;
+        printUtf8At(1, x, fitPad("Прошло", ageW));
         x += ageW + gap;
 
         if (showPrio) {
-            printUtf8At(1, x, fitPad("С/Ср", prioW));;
+            printUtf8At(1, x, fitPad("С/Ср", prioW));
             x += prioW + gap;
         }
 
         if (showDue)
-            printUtf8At(1, x, fitPad("Не позже", dueW));;
+            printUtf8At(1, x, fitPad("Не позже", dueW));
 
         offAttr(CP_SECONDARY, true);
         mvhline(2, 0, ACS_HLINE, cols);
@@ -1167,7 +1186,7 @@ private:
         string count = "Задач: " + intToStr(static_cast<long long>(flat.size()));
         if (g_dirty) count += "   *";
         useAttr(CP_SECONDARY, false);
-        printUtf8At(0, 2, fitOutput(count, static_cast<size_t>(max(1, cols - 4))));;
+        printUtf8At(0, 2, fitOutput(count, static_cast<size_t>(max(1, cols - 4))));
         offAttr(CP_SECONDARY, false);
         drawListHeaders();
 
@@ -1212,23 +1231,23 @@ private:
             int nameW = infoX - nameX - 1;
             if (nameW < 1) nameW = 1;
 
-            printUtf8At(y, nameX, fitPad(name, static_cast<size_t>(nameW)));;
+            printUtf8At(y, nameX, fitPad(name, static_cast<size_t>(nameW)));
 
             int x = infoX;
             string age = "[" + t->formatAgo() + "]";
-            printUtf8At(y, x, fitPad(age, ageW));;
+            printUtf8At(y, x, fitPad(age, ageW));
             x += ageW + gap;
 
             if (showPrio) {
                 string prio = "С:" + levelShort(static_cast<int>(t->difficulty))
                             + " Ср:" + levelShort(static_cast<int>(t->urgency));
-                printUtf8At(y, x, fitPad(prio, prioW));;
+                printUtf8At(y, x, fitPad(prio, prioW));
                 x += prioW + gap;
             }
 
             if (showDue) {
                 string due = t->hasDueDate ? t->formatDue() : "-";
-                printUtf8At(y, x, fitPad(due, dueW));;
+                printUtf8At(y, x, fitPad(due, dueW));
             }
 
             if (selected) offAttr(CP_SELECTED, true);
@@ -1264,11 +1283,11 @@ private:
 
             if (i == menuSel) {
                 useAttr(CP_SELECTED, true);
-                printUtf8At(lineY, x + 3, fitPad(line, static_cast<size_t>(boxW - 6)));;
+                printUtf8At(lineY, x + 3, fitPad(line, static_cast<size_t>(boxW - 6)));
                 offAttr(CP_SELECTED, true);
             } else {
                 useAttr(CP_NORMAL, false);
-                printUtf8At(lineY, x + 3, fitPad(line, static_cast<size_t>(boxW - 6)));;
+                printUtf8At(lineY, x + 3, fitPad(line, static_cast<size_t>(boxW - 6)));
                 offAttr(CP_NORMAL, false);
             }
         }
@@ -1276,7 +1295,7 @@ private:
         useAttr(CP_SECONDARY, false);
         string info = "Корневых задач: " + intToStr(rootTasks.size());
         if (g_dirty) info += "   есть несохранённые изменения";
-        printUtf8At(min(rows - 2, y + boxH + 1), x, fitOutput(info, static_cast<size_t>(boxW)));;
+        printUtf8At(min(rows - 2, y + boxH + 1), x, fitOutput(info, static_cast<size_t>(boxW)));
         offAttr(CP_SECONDARY, false);
     }
 
@@ -1326,7 +1345,7 @@ private:
 
         useAttr(CP_HEADER, true);
         string title = " ЗАДАЧА #" + intToStr(t->id) + " ";
-        printUtf8At(y, x + max(2, (boxW - static_cast<int>(utf8Len(title))) / 2), title);;
+        printUtf8At(y, x + max(2, (boxW - static_cast<int>(utf8Len(title))) / 2), title);
         offAttr(CP_HEADER, true);
 
         int lineY = y + 2;
@@ -1338,15 +1357,15 @@ private:
                 string left = label.substr(0, colon + 1);
                 string right = label.substr(colon + 1);
                 useAttr(CP_SECONDARY, true);
-                printUtf8At(lineY, x + 2, fitPad(left, 17));;
+                printUtf8At(lineY, x + 2, fitPad(left, 17));
                 offAttr(CP_SECONDARY, true);
 
                 useAttr(CP_NORMAL, false);
-                printUtf8At(lineY, x + 20, fitOutput(trimStr(right), static_cast<size_t>(boxW - 23)));;
+                printUtf8At(lineY, x + 20, fitOutput(trimStr(right), static_cast<size_t>(boxW - 23)));
                 offAttr(CP_NORMAL, false);
             } else {
                 useAttr(CP_NORMAL, false);
-                printUtf8At(lineY, x + 2, fitOutput(label, static_cast<size_t>(boxW - 4)));;
+                printUtf8At(lineY, x + 2, fitOutput(label, static_cast<size_t>(boxW - 4)));
                 offAttr(CP_NORMAL, false);
             }
             ++lineY;
@@ -1354,7 +1373,7 @@ private:
 
         useAttr(CP_SECONDARY, false);
         string actions = "[1] Выполнена   [2] Подзадача   [3] Ред.   [4] Удалить   [5] История";
-        printUtf8At(y + boxH - 2, x + 2, fitOutput(actions, static_cast<size_t>(boxW - 4)));;
+        printUtf8At(y + boxH - 2, x + 2, fitOutput(actions, static_cast<size_t>(boxW - 4)));
         offAttr(CP_SECONDARY, false);
     }
 
@@ -1472,7 +1491,7 @@ private:
 
         useAttr(CP_HEADER, true);
         string title = formEdit ? " РЕДАКТИРОВАНИЕ " : " НОВАЯ ЗАДАЧА ";
-        printUtf8At(y, x + max(2, (boxW - static_cast<int>(utf8Len(title))) / 2), title);;
+        printUtf8At(y, x + max(2, (boxW - static_cast<int>(utf8Len(title))) / 2), title);
         offAttr(CP_HEADER, true);
 
         int labelW = 19;
@@ -1487,7 +1506,7 @@ private:
             else useAttr(CP_SECONDARY, true);
 
             string label = fitPad(formLabel(i), static_cast<size_t>(labelW));
-            printUtf8At(lineY, x + 2, label);;
+            printUtf8At(lineY, x + 2, label);
 
             if (active) offAttr(CP_SELECTED, true);
             else offAttr(CP_SECONDARY, true);
@@ -1503,7 +1522,7 @@ private:
             if (active) useAttr(CP_SELECTED, false);
             else useAttr(CP_NORMAL, false);
 
-            printUtf8At(lineY, valueX, fitPad(display, static_cast<size_t>(valueW)));;
+            printUtf8At(lineY, valueX, fitPad(display, static_cast<size_t>(valueW)));
 
             if (active)
                 move(lineY, valueX + static_cast<int>(utf8Len(display)));
@@ -1524,14 +1543,14 @@ private:
 
         useAttr(CP_SECONDARY, false);
         printUtf8At(0, 2, fitOutput("Задача: " + t->displayName(),
-                           static_cast<size_t>(max(1, cols - 4))));;
+                           static_cast<size_t>(max(1, cols - 4))));
         offAttr(CP_SECONDARY, false);
 
         if (t->history.empty()) {
             useAttr(CP_NORMAL, false);
             printUtf8At(3, 2, fitOutput(
                 "История пуста. Клавиша A добавит прошлое выполнение.",
-                static_cast<size_t>(max(1, cols - 4))));;
+                static_cast<size_t>(max(1, cols - 4))));
             offAttr(CP_NORMAL, false);
             return;
         }
@@ -1546,7 +1565,7 @@ private:
 
         useAttr(CP_SECONDARY, false);
         printUtf8At(2, 2, fitOutput(summary,
-                  static_cast<size_t>(max(1, cols - 4))));;
+                  static_cast<size_t>(max(1, cols - 4))));
         offAttr(CP_SECONDARY, false);
 
         int numW = 4;
@@ -1572,9 +1591,9 @@ private:
         if (historyScroll > maxScroll) historyScroll = maxScroll;
 
         useAttr(CP_SECONDARY, true);
-        printUtf8At(4, 2, fitPad("№", numW));;
-        printUtf8At(4, 2 + numW + gap, fitPad("Когда", dateW));;
-        printUtf8At(4, 2 + numW + gap + dateW + gap, fitPad("Прошло с предыдущего", static_cast<size_t>(gapW)));;
+        printUtf8At(4, 2, fitPad("№", numW));
+        printUtf8At(4, 2 + numW + gap, fitPad("Когда", dateW));
+        printUtf8At(4, 2 + numW + gap + dateW + gap, fitPad("Прошло с предыдущего", static_cast<size_t>(gapW)));
         offAttr(CP_SECONDARY, true);
 
         mvhline(5, 2, ACS_HLINE, max(1, cols - 4));
@@ -1598,10 +1617,10 @@ private:
                         difftime(t->history[idx], t->history[idx - 1])));
 
             printUtf8At(y, 2, fitPad(intToStr(static_cast<long long>(idx + 1)),
-                            numW));;
+                            numW));
             printUtf8At(y, 2 + numW + gap, fitPad(formatStamp(t->history[idx]),
-                            dateW));;
-            printUtf8At(y, 2 + numW + gap + dateW + gap, fitPad(gapText, static_cast<size_t>(gapW)));;
+                            dateW));
+            printUtf8At(y, 2 + numW + gap + dateW + gap, fitPad(gapText, static_cast<size_t>(gapW)));
 
             if (selected) offAttr(CP_SELECTED, true);
             else offAttr(CP_NORMAL, false);
@@ -1620,18 +1639,18 @@ private:
 
         useAttr(CP_HEADER, true);
         string title = " ДОБАВИТЬ ВЫПОЛНЕНИЕ ";
-        printUtf8At(y, x + max(2, (boxW - static_cast<int>(utf8Len(title))) / 2), title);;
+        printUtf8At(y, x + max(2, (boxW - static_cast<int>(utf8Len(title))) / 2), title);
         offAttr(CP_HEADER, true);
 
         useAttr(CP_SECONDARY, true);
         printUtf8At(y + 2, x + 2, fitPad(
             "Дата (ДД.ММ.ГГГГ ЧЧ:ММ):",
-            static_cast<size_t>(boxW - 4)));;
+            static_cast<size_t>(boxW - 4)));
         offAttr(CP_SECONDARY, true);
 
         useAttr(CP_SELECTED, false);
         string display = utf8Tail(dateInput, static_cast<size_t>(boxW - 8));
-        printUtf8At(y + 3, x + 3, fitPad(display, static_cast<size_t>(boxW - 6)));;
+        printUtf8At(y + 3, x + 3, fitPad(display, static_cast<size_t>(boxW - 6)));
         move(y + 3, x + 3 + static_cast<int>(utf8Len(display)));
         offAttr(CP_SELECTED, false);
     }
@@ -1659,7 +1678,7 @@ private:
             useAttr(CP_HEADER, true);
             string head = centerText(headers[c], static_cast<size_t>(colW));
             if (c == kanbanCol) attron(A_REVERSE);
-            printUtf8At(startY, x, head);;
+            printUtf8At(startY, x, head);
             if (c == kanbanCol) attroff(A_REVERSE);
             offAttr(CP_HEADER, true);
 
@@ -1694,7 +1713,7 @@ private:
 
                 string cell = items[idx]->displayName()
                             + " [" + items[idx]->formatAgo() + "]";
-                printUtf8At(y, x + 1, fitPad(cell, static_cast<size_t>(colW - 2)));;
+                printUtf8At(y, x + 1, fitPad(cell, static_cast<size_t>(colW - 2)));
 
                 if (selected) offAttr(CP_SELECTED, true);
                 else offAttr(CP_NORMAL, false);
@@ -1775,13 +1794,13 @@ private:
         drawBox(y, x, boxH, boxW);
 
         useAttr(CP_HEADER, true);
-        printUtf8At(y, x + max(2, (boxW - static_cast<int>(utf8Len(title))) / 2), title);;
+        printUtf8At(y, x + max(2, (boxW - static_cast<int>(utf8Len(title))) / 2), title);
         offAttr(CP_HEADER, true);
 
         useAttr(CP_NORMAL, false);
         int ty = y + 2;
         for (size_t i = 0; i < wrapped.size() && ty < y + boxH - 3; ++i, ++ty)
-            printUtf8At(ty, x + 2, fitOutput(wrapped[i], static_cast<size_t>(boxW - 4)));;
+            printUtf8At(ty, x + 2, fitOutput(wrapped[i], static_cast<size_t>(boxW - 4)));
         offAttr(CP_NORMAL, false);
 
         string no = "[ Нет ]";
@@ -1795,13 +1814,13 @@ private:
 
         if (messageReturnIndex == 0) useAttr(CP_SELECTED, true);
         else useAttr(CP_NORMAL, false);
-        printUtf8At(optionY, x + boxW / 2 - 12, no);;
+        printUtf8At(optionY, x + boxW / 2 - 12, no);
         if (messageReturnIndex == 0) offAttr(CP_SELECTED, true);
         else offAttr(CP_NORMAL, false);
 
         if (messageReturnIndex == 1) useAttr(CP_SELECTED, true);
         else useAttr(CP_NORMAL, false);
-        printUtf8At(optionY, x + boxW / 2 + 2, yes);;
+        printUtf8At(optionY, x + boxW / 2 + 2, yes);
         if (messageReturnIndex == 1) offAttr(CP_SELECTED, true);
         else offAttr(CP_NORMAL, false);
     }
@@ -1824,17 +1843,17 @@ private:
 
         useAttr(CP_HEADER, true);
         string title = " СООБЩЕНИЕ ";
-        printUtf8At(y, x + max(2, (boxW - static_cast<int>(utf8Len(title))) / 2), title);;
+        printUtf8At(y, x + max(2, (boxW - static_cast<int>(utf8Len(title))) / 2), title);
         offAttr(CP_HEADER, true);
 
         useAttr(CP_NORMAL, false);
         int ty = y + 2;
         for (size_t i = 0; i < wrapped.size() && ty < y + boxH - 2; ++i, ++ty)
-            printUtf8At(ty, x + 2, fitOutput(wrapped[i], static_cast<size_t>(boxW - 4)));;
+            printUtf8At(ty, x + 2, fitOutput(wrapped[i], static_cast<size_t>(boxW - 4)));
         offAttr(CP_NORMAL, false);
 
         useAttr(CP_SELECTED, true);
-        mvaddstr(y + boxH - 2, x + (boxW - 6) / 2, "[ OK ]");;
+        mvaddstr(y + boxH - 2, x + (boxW - 6) / 2, "[ OK ]");
         offAttr(CP_SELECTED, true);
     }
 
@@ -2118,7 +2137,7 @@ private:
                 beginAddForm(-1);
                 return;
             }
-            if (ch == 27) {
+            if (ch == 27 || ch == 'b' || ch == 'B') {
                 screen = SCR_MENU;
             }
             return;
@@ -2184,6 +2203,8 @@ private:
                 break;
 
             case 27:
+            case 'b':
+            case 'B':
                 screen = SCR_MENU;
                 break;
 
@@ -2243,6 +2264,8 @@ private:
                 break;
 
             case 27:
+            case 'b':
+            case 'B':
                 enterList();
                 break;
         }
@@ -2258,7 +2281,7 @@ private:
     }
 
     void handleForm(int ch) {
-        if (ch == 27) {
+        if (ch == 27 || (ch == 'b' || ch == 'B') && !isFormTextField(formField)) {
             curs_set(0);
             if (formEdit) screen = SCR_DETAIL;
             else if (formParentId >= 0) screen = SCR_DETAIL;
@@ -2321,7 +2344,7 @@ private:
                 dateInput.clear();
                 screen = SCR_HISTORY_ADD;
                 curs_set(1);
-            } else if (ch == 27) {
+                    } else if (ch == 27 || ch == 'b' || ch == 'B') {
                 screen = SCR_DETAIL;
             }
             return;
@@ -2357,13 +2380,15 @@ private:
                 break;
 
             case 27:
+            case 'b':
+            case 'B':
                 screen = SCR_DETAIL;
                 break;
         }
     }
 
     void handleHistoryAdd(int ch) {
-        if (ch == 27) {
+        if (ch == 27 || ch == 'b' || ch == 'B') {
             curs_set(0);
             screen = SCR_HISTORY;
             return;
@@ -2490,7 +2515,7 @@ private:
             return;
         }
 
-        if (ch == 'n' || ch == 'N' || ch == 27) {
+        if (ch == 'n' || ch == 'N' || ch == 27 || ch == 'b' || ch == 'B') {
             ConfirmKind kind = confirmKind;
             messageReturnIndex = 0;
             confirmKind = CONF_NONE;
@@ -2598,14 +2623,14 @@ private:
     }
 
     void handleMessage(int ch) {
-        if (ch == '\n' || ch == KEY_ENTER || ch == 27 || ch == ' ') {
+        if (ch == '\n' || ch == KEY_ENTER || ch == 27 || ch == 'b' || ch == 'B' || ch == ' ') {
             curs_set(0);
             screen = messageReturnScreen;
         }
     }
 
     void showMessage(const string& text, int returnScreen) {
-        messageText = text;
+        messageText = displaySafe(text);
         messageReturnScreen = returnScreen;
         screen = SCR_MESSAGE;
         curs_set(0);
