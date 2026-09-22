@@ -1161,10 +1161,6 @@ private:
         if (infoX < 1) infoX = 1;
 
         useAttr(CP_SECONDARY, true);
-        int taskHeaderX = min(max(12, infoX - 1), max(0, cols - fixed - 1));
-        printUtf8At(1, taskHeaderX, fitOutput("Задача",
-                     static_cast<size_t>(max(1, infoX - taskHeaderX - 1))));
-
         int x = infoX;
         printUtf8At(1, x, fitPad("Прошло", ageW));
         x += ageW + gap;
