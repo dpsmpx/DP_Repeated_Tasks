@@ -87,7 +87,7 @@ static Urgency toUrgency(int v) {
 // Текст выводится напрямую в терминал в исходном UTF-8.
 // ncurses используется только для клавиатуры и размеров окна.
 //
-// Ширина интерфейса по-прежнему считается вручную через utf8Len():
+// Ширина интерфейса считается вручную через utf8Len():
 // для кириллицы и латиницы 1 кодовая точка = 1 экранная ячейка.
 
 static size_t utf8Len(const string& s) {
@@ -170,7 +170,7 @@ static string ansiMove(int y, int x) {
 }
 
 static void terminalClear() {
-    cout << "\033[2J\033[H";
+    cout << "\033[?7l\033[2J\033[H";
 }
 
 static void terminalMove(int y, int x) {
@@ -975,6 +975,7 @@ public:
             if (screen != SCR_TOO_SMALL)
                 drawStatusBar();
 
+            cout << "\033[0m\033[?7h";
             cout.flush();
             untouchwin(stdscr);
 
@@ -1003,6 +1004,8 @@ private:
     }
 
     void offAttr(int pair, bool bold) {
+        (void)pair;
+        (void)bold;
         terminalResetAttr();
     }
 
@@ -1225,8 +1228,6 @@ private:
 
         int infoX = cols - fixed;
         if (infoX < 1) infoX = 1;
-
-        int nWidth = numberWidth();
 
         for (int row = 0; row < visible; ++row) {
             int idx = listScroll + row;
