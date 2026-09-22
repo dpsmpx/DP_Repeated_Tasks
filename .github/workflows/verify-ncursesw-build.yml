@@ -1,0 +1,19 @@
+name: verify-ncursesw-build
+
+on:
+  push:
+    paths:
+      - 'DP_Rep_Tasks_ncs.cpp'
+      - '.github/workflows/verify-ncursesw-build.yml'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install ncursesw
+        run: sudo apt-get update && sudo apt-get install -y libncursesw5-dev
+      - name: Build C++98
+        run: g++ -std=c++98 -Wall -Wextra -Wpedantic -O2 DP_Rep_Tasks_ncs.cpp -lncursesw -o dp_rep_tasks_ncs
+      - name: Build ASAN UBSAN
+        run: g++ -std=c++98 -Wall -Wextra -Wpedantic -O1 -g -fsanitize=address,undefined DP_Rep_Tasks_ncs.cpp -lncursesw -o dp_rep_tasks_ncs_san
