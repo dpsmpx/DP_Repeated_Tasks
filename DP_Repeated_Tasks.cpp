@@ -392,10 +392,13 @@ struct Task {
     // flat: (номер на экране -> id задачи). Храним ИД, а не Task*:
     // указатель внутрь vector<Task> протухает при любом push_back в этот вектор.
     void printTree(int level, int& num, vector< pair<int,int> >& flat, size_t numberWidth) const {
-        size_t width = terminalWidth();
+        const size_t width = terminalWidth();
+
         const bool leaf = subtasks.empty();
         const string marker = leaf ? "[ ] " : (expanded ? "[-] " : "[+] ");
 
+        // Левая часть строки всегда имеет одну и ту же структуру:
+        // уровень -> маркер -> номер. Это делает начало всех строк ровным.
         string prefix = string(static_cast<size_t>(level * 2), ' ')
                       + marker
                       + fitPad(intToStr(num) + ". ", numberWidth + 2);
@@ -405,39 +408,43 @@ struct Task {
         string urg  = "Cr:" + urgToStr(urgency);
         string due  = hasDueDate ? "-> " + formatDue() : "";
 
+        // Ширины столбцов фиксированы только внутри текущего экрана.
+        // Название получает всё оставшееся место и обрезается только для вывода.
         const size_t GAP = 2;
         const size_t AGO = 18;
         const size_t DIF = 9;
         const size_t URG = 10;
         const size_t DUE = 19;
 
+        // На очень узких экранах оставляем только основные данные.
+        // Дополнительные столбцы возвращаются автоматически по мере увеличения ширины.
         bool showDiff = width >= 58;
-        bool showUrg  = width >= 68;
-        bool showDue  = hasDueDate && width >= 96;
+        bool showUrg  = width >= 70;
+        bool showDue  = hasDueDate && width >= 91;
 
         size_t fixed = utf8Len(prefix) + GAP + AGO;
         if (showDiff) fixed += GAP + DIF;
         if (showUrg)  fixed += GAP + URG;
         if (showDue)  fixed += GAP + DUE;
 
-        if (fixed + 2 > width) {
-            string line = prefix + displayName() + "  " + ago;
-            if (showDiff) line += "  " + diff;
-            if (showUrg)  line += "  " + urg;
-            if (showDue)  line += "  " + due;
-            cout << fitOutput(line, width) << "\n";
+        if (fixed + 1 >= width) {
+            // Защита для экстремально узкого окна.
+            cout << fitOutput(prefix + displayName() + "  " + ago, width) << "\n";
         } else {
             size_t nameWidth = width - fixed;
+
             cout << prefix
                  << fitPad(displayName(), nameWidth)
                  << string(GAP, ' ')
                  << fitPad(ago, AGO);
+
             if (showDiff)
                 cout << string(GAP, ' ') << fitPad(diff, DIF);
             if (showUrg)
                 cout << string(GAP, ' ') << fitPad(urg, URG);
             if (showDue)
                 cout << string(GAP, ' ') << fitPad(due, DUE);
+
             cout << "\n";
         }
 
