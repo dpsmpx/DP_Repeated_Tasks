@@ -13,6 +13,7 @@
 #include <vector>
 #include <string>
 #include <utility>
+#include <algorithm>
 #include <ctime>
 #include <cstdio>
 #include <cstring>
@@ -25,6 +26,7 @@ using namespace std;
 static const int       MAX_DEPTH    = 64;          // глубина вложенности
 static const int       MAX_TASKS    = 50000;       // всего задач в файле
 static const int       MAX_CHILDREN = 10000;       // подзадач у одной задачи
+static const int       MAX_HISTORY  = 5000;        // отметок о выполнении у одной задачи
 static const long long MIN_TS       = 0LL;         // 1970-01-01
 static const long long MAX_TS       = 4102444800LL;// 2100-01-01
 
@@ -223,13 +225,48 @@ static string sanitizeField(const string& s) {
     return r;
 }
 
+// ===================== ФОРМАТИРОВАНИЕ ВРЕМЕНИ =====================
+// Раскладываем последовательным вычитанием. Прежняя версия считала
+// years = days/365 и months = days/30 независимо от одной величины, а остаток
+// брала как days%30; базы несовместимы (12*30 = 360 != 365), поэтому день
+// «уезжал» на 5 суток за каждый год.
+// Год здесь = 365 дней, месяц = 30 дней: приближение грубое, но согласованное.
+static string formatDuration(long long total) {
+    if (total < 0) total = 0;
+    long long hours  = (total % 86400) / 3600;
+    long long days   = total / 86400;
+    long long years  = days / 365;  days -= years * 365;
+    long long months = days / 30;   days -= months * 30;
+
+    if (total < 86400)
+        return hours == 0 ? string("<1ч") : intToStr(hours) + "ч";
+    if (years == 0 && months == 0)
+        return intToStr(days) + "д " + intToStr(hours) + "ч";
+    if (years == 0)
+        return intToStr(months) + "м " + intToStr(days) + "д " + intToStr(hours) + "ч";
+    return intToStr(years) + "г " + intToStr(months) + "м "
+         + intToStr(days) + "д " + intToStr(hours) + "ч";
+}
+
+// localtime() возвращает NULL, если time_t не представим в struct tm.
+// Прежняя версия передавала этот NULL в strftime — SIGSEGV прямо при отрисовке.
+static string formatStamp(time_t ts) {
+    tm* ti = localtime(&ts);
+    if (ti == 0) return "(некорр. дата)";
+    char buf[32];
+    if (strftime(buf, sizeof(buf), "%d.%m.%Y %H:%M", ti) == 0) return "(некорр. дата)";
+    return string(buf);
+}
+
 // ===================== ЗАДАЧА =====================
 struct Task {
     int         id;
     string      name;
     string      description;
-    time_t      lastDone;
-    bool        neverDone;    // задачу ещё ни разу не отмечали выполненной
+    // Единственный источник правды о выполнениях: метки времени по возрастанию,
+    // последняя — самая свежая. «Никогда не выполнялась» — это пустая история,
+    // а не отдельный флаг, поэтому разойтись между собой они не могут.
+    vector<time_t> history;
     time_t      dueDate;      // необязательная пометка «не позже», не расписание
     bool        hasDueDate;
     Difficulty  difficulty;
@@ -238,46 +275,47 @@ struct Task {
     bool        expanded;
 
     Task()
-        : id(0), lastDone(time(0)), neverDone(true), dueDate(0), hasDueDate(false),
+        : id(0), dueDate(0), hasDueDate(false),
           difficulty(DIFF_HIGH), urgency(URG_LOW), expanded(true) {}
 
-    // Главная метрика приложения. Раскладываем последовательным вычитанием:
-    // прежняя версия считала years = days/365 и months = days/30 независимо
-    // от одной величины, а остаток брала как days%30. Базы несовместимы
-    // (12*30 = 360 != 365), поэтому день «уезжал» на 5 суток за каждый год.
-    // Год здесь = 365 дней, месяц = 30 дней; приближение грубое, но согласованное.
+    bool   neverDone() const { return history.empty(); }
+    size_t doneCount() const { return history.size(); }
+    time_t lastDone()  const { return history.empty() ? 0 : history[history.size() - 1]; }
+
+    // История держится отсортированной: пользователь может задним числом
+    // вписать выполнение, о котором вспомнил позже.
+    void addCompletion(time_t when) {
+        history.push_back(when);
+        sort(history.begin(), history.end());
+    }
+
+    // Средний интервал между соседними выполнениями. Это описание того, что
+    // человек делал на самом деле, а не заданное расписание: приложение
+    // намеренно ничего не планирует.
+    bool intervalStats(long long& avg, long long& minI, long long& maxI) const {
+        if (history.size() < 2) return false;
+        avg = 0;
+        minI = maxI = -1;
+        for (size_t i = 1; i < history.size(); ++i) {
+            long long d = static_cast<long long>(difftime(history[i], history[i-1]));
+            if (d < 0) d = 0;
+            avg += d;
+            if (minI < 0 || d < minI) minI = d;
+            if (maxI < 0 || d > maxI) maxI = d;
+        }
+        avg /= static_cast<long long>(history.size() - 1);
+        return true;
+    }
+
+    // Главная метрика приложения.
     string formatAgo() const {
-        if (neverDone) return "никогда";
-
-        double diff = difftime(time(0), lastDone);
-        if (diff < 0) diff = 0;   // часы пользователя сдвинулись назад
-
-        long long total  = static_cast<long long>(diff);
-        long long hours  = (total % 86400) / 3600;
-        long long days   = total / 86400;
-        long long years  = days / 365;  days   -= years * 365;
-        long long months = days / 30;   days   -= months * 30;
-
-        if (total < 86400)
-            return hours == 0 ? string("<1ч") : intToStr(hours) + "ч";
-        if (years == 0 && months == 0)
-            return intToStr(days) + "д " + intToStr(hours) + "ч";
-        if (years == 0)
-            return intToStr(months) + "м " + intToStr(days) + "д " + intToStr(hours) + "ч";
-        return intToStr(years) + "г " + intToStr(months) + "м "
-             + intToStr(days) + "д " + intToStr(hours) + "ч";
+        if (neverDone()) return "никогда";
+        return formatDuration(static_cast<long long>(difftime(time(0), lastDone())));
     }
 
     string formatDue() const {
         if (!hasDueDate) return "-";
-        // localtime() возвращает NULL, если time_t не представим в struct tm.
-        // Прежняя версия передавала этот NULL в strftime — SIGSEGV прямо
-        // при отрисовке списка, то есть вся база становилась недоступна.
-        tm* ti = localtime(&dueDate);
-        if (ti == 0) return "(некорр. дата)";
-        char buf[32];
-        if (strftime(buf, sizeof(buf), "%d.%m.%Y %H:%M", ti) == 0) return "(некорр. дата)";
-        return string(buf);
+        return formatStamp(dueDate);
     }
 
     string displayName() const {
@@ -319,6 +357,7 @@ static const char* FILENAME     = "repeated_tasks.dat";
 static const char* FILENAME_TMP = "repeated_tasks.dat.tmp";
 static const char* FILENAME_BAK = "repeated_tasks.dat.bak";
 static const char* MAGIC_V2     = "RTASKS2";
+static const char* MAGIC_V3     = "RTASKS3";   // добавлена история выполнений
 
 // ===================== ПОИСК / СБОР =====================
 static void collectAll(vector<Task*>& out, vector<Task>& src) {
@@ -354,9 +393,10 @@ static void writeTask(ofstream& out, const Task& t) {
         << t.id << "\n"
         << sanitizeField(t.name) << "\n"
         << sanitizeField(t.description) << "\n"
-        << static_cast<long long>(t.lastDone) << "\n"
-        << (t.neverDone ? 1 : 0) << "\n"
-        << static_cast<long long>(t.dueDate) << "\n"
+        << t.history.size() << "\n";
+    for (size_t h = 0; h < t.history.size(); ++h)
+        out << static_cast<long long>(t.history[h]) << "\n";
+    out << static_cast<long long>(t.dueDate) << "\n"
         << (t.hasDueDate ? 1 : 0) << "\n"
         << static_cast<int>(t.difficulty) << "\n"
         << static_cast<int>(t.urgency) << "\n"
@@ -376,7 +416,7 @@ static bool writeAllTo(const char* path, string& err) {
     ofstream out(path);
     if (!out) { err = "не удалось открыть файл для записи"; return false; }
 
-    out << MAGIC_V2 << "\n" << nextId << "\n" << rootTasks.size() << "\n";
+    out << MAGIC_V3 << "\n" << nextId << "\n" << rootTasks.size() << "\n";
     for (size_t i = 0; i < rootTasks.size(); ++i) writeTask(out, rootTasks[i]);
 
     out.flush();
@@ -421,11 +461,11 @@ static bool saveData(bool quiet) {
 
 struct Loader {
     ifstream& in;
-    bool      v2;
+    int       ver;      // 1 = без заголовка, 2 = RTASKS2, 3 = RTASKS3
     int       total;
     string    err;
 
-    Loader(ifstream& i, bool isV2) : in(i), v2(isV2), total(0) {}
+    Loader(ifstream& i, int version) : in(i), ver(version), total(0) {}
 
     bool line(string& out) {
         if (!getline(in, out)) { err = "файл оборван"; return false; }
@@ -464,13 +504,30 @@ struct Loader {
         if (!intLine(t.id, 0, 2147483647, "id")) return false;
         if (!line(t.name)) return false;
         if (!line(t.description)) return false;
-        if (!timeLine(t.lastDone)) return false;
-
-        if (v2) {
-            if (!intLine(v, 0, 1, "neverDone")) return false;
-            t.neverDone = (v != 0);
+        t.history.clear();
+        if (ver >= 3) {
+            int hcnt;
+            if (!intLine(hcnt, 0, MAX_HISTORY, "число отметок о выполнении")) return false;
+            t.history.reserve(static_cast<size_t>(hcnt));
+            for (int h = 0; h < hcnt; ++h) {
+                time_t ts;
+                if (!timeLine(ts)) return false;
+                t.history.push_back(ts);
+            }
+            // Файл мог быть отредактирован снаружи — восстанавливаем порядок,
+            // иначе интервалы между отметками ушли бы в минус.
+            sort(t.history.begin(), t.history.end());
         } else {
-            t.neverDone = false;   // в старом формате поля не было
+            // v1/v2: была одна метка времени (+ признак «ни разу» в v2).
+            // Разворачиваем её в историю из одного элемента — данные не теряются.
+            time_t last;
+            if (!timeLine(last)) return false;
+            bool never = false;
+            if (ver == 2) {
+                if (!intLine(v, 0, 1, "neverDone")) return false;
+                never = (v != 0);
+            }
+            if (!never) t.history.push_back(last);
         }
 
         if (!timeLine(t.dueDate)) return false;
@@ -482,7 +539,7 @@ struct Loader {
         if (!intLine(v, -2147483647, 2147483647, "urgency")) return false;
         t.urgency = toUrgency(v);
 
-        if (v2) {
+        if (ver >= 2) {
             if (!intLine(v, 0, 1, "expanded")) return false;
             t.expanded = (v != 0);
         } else {
@@ -550,10 +607,11 @@ static bool loadData(bool quiet) {
     }
     if (!first.empty() && first[first.size()-1] == '\r') first.erase(first.size()-1);
 
-    bool v2 = (trimStr(first) == MAGIC_V2);
+    string magic = trimStr(first);
+    int  ver = (magic == MAGIC_V3) ? 3 : (magic == MAGIC_V2 ? 2 : 1);
     int  loadedNextId = 1;
 
-    if (v2) {
+    if (ver >= 2) {
         string s;
         if (!getline(in, s) || !parseInt(trimStr(s), loadedNextId)) loadedNextId = 1;
     } else {
@@ -571,7 +629,7 @@ static bool loadData(bool quiet) {
         return false;
     }
 
-    Loader ld(in, v2);
+    Loader ld(in, ver);
     vector<Task> loaded;
     loaded.reserve(static_cast<size_t>(cnt));
     for (int i = 0; i < cnt; ++i) {
@@ -659,7 +717,7 @@ static void showKanban(bool byDifficulty) {
 }
 
 // ===================== РАБОТА С ЗАДАЧАМИ =====================
-static bool askDueDate(time_t& outDue) {
+static bool askDateTime(time_t& outWhen) {
     cout << "Год (1970-2099): ";  int y   = getInt(1970, 2099, false, 0);
     cout << "Месяц (1-12): ";     int mon = getInt(1, 12, false, 1);
     cout << "День (1-31): ";      int d   = getInt(1, 31, false, 1);
@@ -681,7 +739,7 @@ static bool askDueDate(time_t& outDue) {
         cout << "Некорректная дата, пропускаю.\n";
         return false;
     }
-    outDue = res;
+    outWhen = res;
     return true;
 }
 
@@ -702,24 +760,18 @@ static void addTask(Task* parent) {
     cout << "Описание (Enter - пропустить): ";
     t.description = getLine();
 
-    // Задача только что создана и ещё ни разу не выполнялась.
+    // История пуста: задача создана, но ещё ни разу не выполнялась.
     // Прежняя версия ставила lastDone = сейчас, и новая задача сразу
     // показывала «<1ч», то есть основная метрика стартовала с неправды.
-    t.neverDone = true;
-    t.lastDone  = time(0);
-
     if (confirm("Отметить, что задача уже выполнялась ранее?", false)) {
         cout << "Когда её выполняли последний раз?\n";
         time_t when;
-        if (askDueDate(when)) {
-            t.lastDone  = when;
-            t.neverDone = false;
-        }
+        if (askDateTime(when)) t.addCompletion(when);
     }
 
     if (confirm("Задать необязательную пометку \"не позже\"?", false)) {
         time_t due;
-        if (askDueDate(due)) {
+        if (askDateTime(due)) {
             t.dueDate    = due;
             t.hasDueDate = true;
         }
@@ -775,7 +827,7 @@ static void editTask(Task* t) {
     int dd = getInt(0, 2, true, 0);
     if (dd == 1) {
         time_t due;
-        if (askDueDate(due)) { t->dueDate = due; t->hasDueDate = true; g_dirty = true; }
+        if (askDateTime(due)) { t->dueDate = due; t->hasDueDate = true; g_dirty = true; }
     } else if (dd == 2) {
         t->hasDueDate = false;
         t->dueDate    = 0;
@@ -785,6 +837,88 @@ static void editTask(Task* t) {
     if (g_inputClosed) return;
     cout << "\nСохранено в памяти (запись на диск — пункт 5 главного меню).\n";
     waitEnter();
+}
+
+// ===================== ИСТОРИЯ ВЫПОЛНЕНИЙ =====================
+// Ради этого приложение и существует: видно не только «когда в последний раз»,
+// но и насколько регулярно задача выполнялась на самом деле. Никакого
+// расписания это не задаёт — только описывает уже случившееся.
+static void showHistory(int taskId) {
+    while (true) {
+        if (g_inputClosed) return;
+        Task* t = findById(taskId, rootTasks);
+        if (t == 0) return;
+
+        clearScreen();
+        cout << "========== ИСТОРИЯ ВЫПОЛНЕНИЙ ==========\n";
+        cout << "Задача: " << t->displayName() << "\n\n";
+
+        if (t->history.empty()) {
+            cout << "Задача ещё ни разу не отмечалась выполненной.\n";
+        } else {
+            cout << "Всего выполнений: " << t->doneCount() << "\n";
+            long long avg, mn, mx;
+            if (t->intervalStats(avg, mn, mx)) {
+                cout << "Обычный интервал: " << formatDuration(avg)
+                     << "   (от " << formatDuration(mn) << " до " << formatDuration(mx) << ")\n";
+            }
+            cout << "Прошло с последнего: " << t->formatAgo() << "\n\n";
+
+            cout << "  №  Когда                  Прошло с предыдущего\n";
+            cout << "  -------------------------------------------------\n";
+            // Свежие сверху: обычно интересны последние несколько.
+            for (size_t i = t->history.size(); i-- > 0; ) {
+                string gap = "-";
+                if (i > 0)
+                    gap = formatDuration(
+                        static_cast<long long>(difftime(t->history[i], t->history[i-1])));
+                cout << "  " << utf8Pad(intToStr(static_cast<long long>(i + 1)), 2)
+                     << " " << utf8Pad(formatStamp(t->history[i]), 22)
+                     << " " << gap << "\n";
+            }
+        }
+
+        cout << "\n1. Добавить прошлое выполнение\n";
+        cout << "2. Удалить ошибочную отметку\n";
+        cout << "0. Назад\n";
+        cout << "Выбор: ";
+
+        int c = getInt(0, 2, true, 0);
+        if (g_inputClosed || c == 0) return;
+
+        if (c == 1) {
+            if (t->history.size() >= static_cast<size_t>(MAX_HISTORY)) {
+                cout << "\nДостигнут предел в " << MAX_HISTORY << " отметок.\n";
+                waitEnter();
+                continue;
+            }
+            cout << "Когда задача была выполнена?\n";
+            time_t when;
+            if (askDateTime(when)) {
+                if (difftime(when, time(0)) > 0) {
+                    cout << "\nЭта дата в будущем — отметка не добавлена.\n";
+                } else {
+                    t->addCompletion(when);   // встанет на своё место по дате
+                    g_dirty = true;
+                    cout << "\nДобавлено. Всего выполнений: " << t->doneCount() << "\n";
+                }
+                waitEnter();
+            }
+        } else if (c == 2) {
+            if (t->history.empty()) continue;
+            cout << "Номер отметки для удаления (1-" << t->history.size() << ", 0-отмена): ";
+            int n = getInt(0, static_cast<int>(t->history.size()), true, 0);
+            if (n > 0) {
+                string when = formatStamp(t->history[static_cast<size_t>(n - 1)]);
+                if (confirm("Удалить отметку от " + when + "?", false)) {
+                    t->history.erase(t->history.begin() + (n - 1));
+                    g_dirty = true;
+                    cout << "\nОтметка удалена.\n";
+                    waitEnter();
+                }
+            }
+        }
+    }
 }
 
 // Принимает id, а не Task*: указатель протух бы сразу после удаления задачи,
@@ -799,7 +933,12 @@ static void taskDetails(int taskId) {
         cout << "========== ЗАДАЧА ==========\n";
         cout << "Название:      " << t->displayName() << "\n";
         cout << "Описание:      " << (t->description.empty() ? "-" : t->description) << "\n";
-        cout << "Послед.выполн: " << t->formatAgo() << (t->neverDone ? "" : " назад") << "\n";
+        cout << "Послед.выполн: " << t->formatAgo() << (t->neverDone() ? "" : " назад") << "\n";
+        cout << "Выполнено раз:  " << t->doneCount();
+        long long avg, mn, mx;
+        if (t->intervalStats(avg, mn, mx))
+            cout << "   (обычно раз в " << formatDuration(avg) << ")";
+        cout << "\n";
         cout << "Не позже:      " << t->formatDue() << "\n";
         cout << "Сложность:     " << diffToStr(t->difficulty) << "\n";
         cout << "Срочность:     " << urgToStr(t->urgency) << "\n";
@@ -808,18 +947,20 @@ static void taskDetails(int taskId) {
         cout << "2. Добавить подзадачу\n";
         cout << "3. Редактировать\n";
         cout << "4. Удалить эту задачу\n";
+        cout << "5. История выполнений\n";
         cout << "0. Назад\n";
         cout << "Выбор: ";
 
-        int c = getInt(0, 4, true, 0);
+        int c = getInt(0, 5, true, 0);
         if (g_inputClosed || c == 0) return;
 
         if (c == 1) {
-            t->lastDone  = time(0);
-            t->neverDone = false;
-            g_dirty      = true;
-            cout << "\nСчётчик сброшен: задача выполнена только что.\n";
+            t->addCompletion(time(0));
+            g_dirty = true;
+            cout << "\nОтмечено. Всего выполнений: " << t->doneCount() << "\n";
             waitEnter();
+        } else if (c == 5) {
+            showHistory(taskId);
         } else if (c == 2) {
             addTask(t);
         } else if (c == 3) {
